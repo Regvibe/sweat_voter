@@ -35,8 +35,13 @@ fn main() {
     let web_options = eframe::WebOptions::default();
 
     wasm_bindgen_futures::spawn_local(async {
-        let document = web_sys::window()
-            .expect("No window")
+
+        let window = web_sys::window().expect("No window");
+
+        /*let location = window.location();
+        let href = location.href().expect("Failed to get href");*/
+
+        let document = window
             .document()
             .expect("No document");
 
