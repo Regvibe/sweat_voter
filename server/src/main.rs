@@ -115,8 +115,6 @@ async fn delete_nickname(delete_nickname: web::Json<DeleteNickname>, data: web::
     web::Json(lock.participants.clone())
 }
 
-
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // install global subscriber configured based on RUST_LOG envvar.
@@ -138,7 +136,7 @@ async fn main() -> std::io::Result<()> {
 
     })
         .keep_alive(KeepAlive::Os)
-        .bind(("0.0.0.0", 16384))?
+        .bind(("0.0.0.0", 8080))?
         .run()
         .await
 }

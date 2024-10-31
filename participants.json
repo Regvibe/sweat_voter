@@ -8,8 +8,10 @@
     "Callouet Mathieu": [],
     "Cao Benjamin": [
       {
-        "nickname": "\"Benj le chinois\"",
-        "votes": []
+        "nickname": "",
+        "votes": [
+          "Thomas Etienne"
+        ]
       }
     ],
     "Cappelle Anthony": [],
@@ -40,7 +42,8 @@
       {
         "nickname": "LeanderDragon",
         "votes": [
-          "Thomas Etienne"
+          "Thomas Etienne",
+          "Vacher Alban"
         ]
       }
     ],
