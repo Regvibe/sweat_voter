@@ -64,9 +64,13 @@ async fn add_nickname(add_nickname: web::Json<AddNickname>, data: web::Data<RwLo
     } = add_nickname.deref();
     let mut lock = data.write().expect("Failed to lock data");
     let nicknames = lock.participants.names.get_mut(name).expect("Failed to find name");
-    if let None = nicknames.iter().find(|n| n.nickname == *nickname) { //add only if not already present
+    if let None = nicknames.iter().find(|n| n.nickname == nickname.trim()) { //add only if not already present
+        let trim = nickname.trim();
+        if trim.is_empty() {
+            return web::Json(lock.participants.clone());
+        }
         nicknames.push(Nickname {
-            nickname: nickname.clone(),
+            nickname: nickname.trim().to_string(),
             votes: Vec::new(),
         });
     }
