@@ -21,7 +21,7 @@ impl HttpApp {
             let names = response.map(|result| String::from_utf8(result.bytes));
             if let Ok(Ok(names)) = names {
                 let participants: Participants = serde_json::from_str(&names).expect(&names);
-                tx.send(participants).expect("Failed to send names");
+                let _ = tx.send(participants);
             }
         });
     }

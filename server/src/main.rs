@@ -62,6 +62,8 @@ async fn add_nickname(add_nickname: web::Json<AddNickname>, data: web::Data<RwLo
         name,
         nickname,
     } = add_nickname.deref();
+    println!("add_nickname: name: {}, nickname: {}", name, nickname);
+
     let mut lock = data.write().expect("Failed to lock data");
     let nicknames = lock.participants.names.get_mut(name).expect("Failed to find name");
     if let None = nicknames.iter().find(|n| n.nickname == nickname.trim()) { //add only if not already present
@@ -85,6 +87,8 @@ async fn vote_nickname(vote_nickname: web::Json<VoteNickname>, data: web::Data<R
         nickname,
         voter,
     } = vote_nickname.deref();
+    println!("vote_nickname: name: {}, nickname: {}, voter: {}", name, nickname, voter);
+
     let mut lock = data.write().expect("Failed to lock data");
 
     let nicknames = lock.participants.names.get_mut(name).expect("Failed to find name");
@@ -107,6 +111,9 @@ async fn delete_nickname(delete_nickname: web::Json<DeleteNickname>, data: web::
         name,
         nickname,
     } = delete_nickname.deref();
+
+    println!("delete_nickname: name: {}, nickname: {}", name, nickname);
+
     let mut lock = data.write().expect("Failed to lock data");
 
     let nicknames = lock.participants.names.get_mut(name).expect("Failed to find name");
