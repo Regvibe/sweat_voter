@@ -41,7 +41,14 @@
       }
     ],
     "Malicieux Diego": [],
-    "Paillet Lucas": [],
+    "Paillet Lucas": [
+      {
+        "nickname": "test",
+        "votes": [
+          "Cao Benjamin"
+        ]
+      }
+    ],
     "Philippon Titouan": [],
     "Piedagnel Johan": [],
     "Poret Allan": [],

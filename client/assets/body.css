@@ -26,16 +26,39 @@
 	text-shadow: 10px 10px 8px rgba(0, 0, 0, 0.3);
 }
 
-.instru {
-	position: inherit; 
-	margin-top: 2%;
-	color: white;
-	font-size: 20px;
+
+.dropdown {
+    position: relative;
+    display: flex;
 	text-align: center;
-	text-shadow: 10px 10px 8px rgba(0, 0, 0, 0.3);
+	justify-content: center; /* Center horizontally */
+}
+
+.dropbtn {
+    background-color: #404040; /* Green background */
+    color: white; /* White text */
+    padding: 10px 20px; /* Some padding */
+    font-size: 16px; /* Font size */
+    border: none; /* No border */
+    cursor: pointer; /* Pointer cursor on hover */
+}
+
+.dropdown-content {
+    display: none; /* Hidden by default */
+    position: absolute; /* Position it below the button */
+    background-color: #303030; /* Light background */
+	color: white; /* White text */
+    min-width: 160px; /* Minimum width */
+    box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2); /* Shadow effect */
+    z-index: 1; /* Sit on top */
+	padding-right: 10px;
 }
 
 .liste_instru {
 	display: inline-block;
 	text-align: left;
+}
+
+.show {
+    display: block; /* Show the dropdown content */
 }
