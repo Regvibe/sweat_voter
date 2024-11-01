@@ -100,7 +100,7 @@ impl App for HttpApp {
                     self.request_name();
                 }
 
-                ui.label("entrez votre Nom Prénom, seul le premier mot du nom et du prénom, accent compris");
+                
                 let reponse = ui.add(egui::TextEdit::singleline(&mut self.editor_name).hint_text("Nom Prénom"));
                 if reponse.changed() {
                     self.update_try_edit();
