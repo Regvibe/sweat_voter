@@ -95,12 +95,6 @@ impl App for HttpApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::top("header").show_inside(ui, |ui| {
-                ui.heading("Super Selecteur de Sweat 3000");
-                ui.label("Pour suivre les petites traditions du lycée Corneille, on doit proposer des surnoms aux autres pour les sweats");
-                ui.label("chaque participant dispose d'une voie par personne pour choisir un surnom");
-                ui.label("vous etres libre de proposer de nouveaux surnoms pour les autres");
-                ui.label("vous pouvez changer vos votes à tout moment");
-                ui.label("si un surnom ne vous plait pas, vous pouvez le supprimer");
 
                 if ui.button("Rafraichir").clicked() {
                     self.request_name();
