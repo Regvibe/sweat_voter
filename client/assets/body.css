@@ -13,6 +13,7 @@
 	max-height: 80px;
 	height: 100%;
 	top: 10px;
+	max-width: 90%;
 }
 
 .description {
