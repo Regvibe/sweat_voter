@@ -59,8 +59,18 @@
     "Thomas Etienne": [],
     "Turquet Alexis": [],
     "Vacher Alban": [],
-    "Villemant Elie": [],
+    "Villemant Elie": [
+      {
+        "nickname": "Elie Coptère",
+        "votes": [
+          "Cao Benjamin"
+        ]
+      }
+    ],
     "Vincent Hugo": [],
-    "Zerrouqa Samy": []
+    "Zerrouqa Samy": [],
+	"Mr. Hiron-Sirot": [],
+	"Mr. Briens": [],
+	"Mr. Michel": []
   }
 }

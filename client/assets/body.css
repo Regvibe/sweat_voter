@@ -1,51 +1,58 @@
 .header {
-	position: fixed;
-    width: 100%;
-	overflow: hidden;
-
+	position: relative;
+	text-align: center;
+	z-index: 100;
 }
 
 .banner {
-	position: fixed;
-	display: block;
+	position: relative;
+	z-index: 100;
 	background-position: center;
 	background-repeat: no-repeat;
 	background-size: cover;
-	width: 100%;
-	height: auto;
+	max-height: 80px;
+	height: 100%;
+	top: 10px;
 }
 
 .description {
-	position: inherit; 
-	margin-top: 10%;
+	position: relative; 
+	overflow: visible;
+	z-index: 100;
+	margin-top: 40px;
 	color: white;
 	font-size: 20px;
-	margin-left: 5%;
-	margin-right: 5%;
+	margin-top: 10px;
+	margin-bottom: 10px;
 	text-align: center;
 	text-shadow: 10px 10px 8px rgba(0, 0, 0, 0.3);
 }
 
+.instr {
+	z-index: 10;
+    position: absolute;
+	bottom: 30px;
+	right: 30px;
+}
 
 .dropdown {
     position: relative;
     display: flex;
 	text-align: center;
-	justify-content: center; /* Center horizontally */
 }
 
 .dropbtn {
     background-color: #404040; /* Green background */
     color: white; /* White text */
-    padding: 10px 20px; /* Some padding */
-    font-size: 16px; /* Font size */
+    padding: 12px 24px; /* Some padding */
+    font-size: 20px; /* Font size */
     border: none; /* No border */
     cursor: pointer; /* Pointer cursor on hover */
 }
 
 .dropdown-content {
     display: none; /* Hidden by default */
-    position: absolute; /* Position it below the button */
+    position: relative; /* Position it below the button */
     background-color: #303030; /* Light background */
 	color: white; /* White text */
     min-width: 160px; /* Minimum width */
@@ -55,7 +62,7 @@
 }
 
 .liste_instru {
-	display: inline-block;
+	display: relative;
 	text-align: left;
 }
 
