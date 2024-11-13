@@ -1,6 +1,6 @@
 use std::io::ErrorKind;
 use std::ops::Deref;
-use std::sync::RwLock;
+use std::sync::{LazyLock, Mutex};
 use actix_cors::Cors;
 use actix_files::Files;
 use actix_web::{web, web::ServiceConfig, App, HttpServer, Responder};
@@ -11,6 +11,11 @@ use common::{AddNickname, DeleteNickname, Nickname, Participants, VoteNickname};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 extern crate tracing;
+
+// come from my deepest nightmare ...
+
+type State = Mutex<AppState>;
+static STATE: LazyLock<State> = LazyLock::new(AppState::new);
 
 #[derive(Clone)]
 struct AppState {
@@ -39,8 +44,9 @@ impl AppState {
         }
     }
 
-    fn new() -> RwLock<Self> {
-        RwLock::new(Self::create())
+    fn new() -> Mutex<Self> {
+        println!("Creating new AppState");
+        Mutex::new(Self::create())
     }
 
     fn save(&self) {
@@ -50,21 +56,21 @@ impl AppState {
 }
 
 #[actix_web::get("/list")]
-async fn list(data: web::Data<RwLock<AppState>>) -> impl Responder {
-    let lock = data.read().expect("Failed to lock data");
+async fn list() -> impl Responder {
+    let lock = STATE.lock().expect("Failed to lock data");
     let participants = lock.participants.clone();
     web::Json(participants)
 }
 
 #[actix_web::post("/add_nickname")]
-async fn add_nickname(add_nickname: web::Json<AddNickname>, data: web::Data<RwLock<AppState>>) -> impl Responder {
+async fn add_nickname(add_nickname: web::Json<AddNickname>) -> impl Responder {
     let AddNickname {
         name,
         nickname,
     } = add_nickname.deref();
     println!("add_nickname: name: {}, nickname: {}", name, nickname);
 
-    let mut lock = data.write().expect("Failed to lock data");
+    let mut lock = STATE.lock().expect("Failed to lock data");
     let nicknames = lock.participants.names.get_mut(name).expect("Failed to find name");
     if let None = nicknames.iter().find(|n| n.nickname == nickname.trim()) { //add only if not already present
         let trim = nickname.trim();
@@ -81,7 +87,7 @@ async fn add_nickname(add_nickname: web::Json<AddNickname>, data: web::Data<RwLo
 }
 
 #[actix_web::post("/vote_nickname")]
-async fn vote_nickname(vote_nickname: web::Json<VoteNickname>, data: web::Data<RwLock<AppState>>) -> impl Responder {
+async fn vote_nickname(vote_nickname: web::Json<VoteNickname>) -> impl Responder {
     let VoteNickname {
         name,
         nickname,
@@ -89,7 +95,7 @@ async fn vote_nickname(vote_nickname: web::Json<VoteNickname>, data: web::Data<R
     } = vote_nickname.deref();
     println!("vote_nickname: name: {}, nickname: {}, voter: {}", name, nickname, voter);
 
-    let mut lock = data.write().expect("Failed to lock data");
+    let mut lock = STATE.lock().expect("Failed to lock data");
 
     let nicknames = lock.participants.names.get_mut(name).expect("Failed to find name");
 
@@ -106,7 +112,7 @@ async fn vote_nickname(vote_nickname: web::Json<VoteNickname>, data: web::Data<R
 }
 
 #[actix_web::post("/delete_nickname")]
-async fn delete_nickname(delete_nickname: web::Json<DeleteNickname>, data: web::Data<RwLock<AppState>>) -> impl Responder {
+async fn delete_nickname(delete_nickname: web::Json<DeleteNickname>) -> impl Responder {
     let DeleteNickname {
         name,
         nickname,
@@ -114,7 +120,7 @@ async fn delete_nickname(delete_nickname: web::Json<DeleteNickname>, data: web::
 
     println!("delete_nickname: name: {}, nickname: {}", name, nickname);
 
-    let mut lock = data.write().expect("Failed to lock data");
+    let mut lock = STATE.lock().expect("Failed to lock data");
 
     let nicknames = lock.participants.names.get_mut(name).expect("Failed to find name");
     nicknames.retain(|n| n.nickname != *nickname);
@@ -134,7 +140,6 @@ async fn main() -> std::io::Result<()> {
         let cors = Cors::permissive();
 
         App::new()
-            .app_data(web::Data::new(AppState::new()))
             .wrap(Logger::default())
             .wrap(cors)
             .configure(routes)
