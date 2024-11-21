@@ -101,6 +101,7 @@ impl App for HttpApp {
                 if ui.button("Rafraichir").clicked() {
                     self.request_name();
                 }
+
                 
                 let reponse = ui.add(egui::TextEdit::singleline(&mut self.editor_name).hint_text("Nom Prénom"));
                 if reponse.changed() {

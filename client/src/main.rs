@@ -1,161 +1,77 @@
-use std::io::ErrorKind;
-use std::ops::Deref;
-use std::sync::{LazyLock, Mutex};
-use actix_cors::Cors;
-use actix_files::Files;
-use actix_web::{web, web::ServiceConfig, App, HttpServer, Responder};
-use actix_web::http::{KeepAlive};
-use actix_web::middleware::Logger;
-use common::{AddNickname, DeleteNickname, Nickname, Participants, VoteNickname};
+#![warn(clippy::all, rust_2018_idioms)]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+// When compiling natively:
+#[cfg(not(target_arch = "wasm32"))]
+fn main() -> eframe::Result {
+    env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
-extern crate tracing;
-
-// come from my deepest nightmare ...
-
-type State = Mutex<AppState>;
-static STATE: LazyLock<State> = LazyLock::new(AppState::new);
-
-#[derive(Clone)]
-struct AppState {
-    participants: Participants,
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([400.0, 300.0])
+            .with_min_inner_size([300.0, 220.0])
+            .with_icon(
+                // NOTE: Adding an icon is optional
+                eframe::icon_data::from_png_bytes(&include_bytes!("../assets/icon-256.png")[..])
+                    .expect("Failed to load icon"),
+            ),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "sweat select client",
+        native_options,
+        Box::new(|cc| Ok(Box::new(client::HttpApp::new(cc)))),
+    )
 }
 
-impl AppState {
-    fn create() -> Self {
-        match std::fs::File::open("participants.json") {
-            Ok(file) => {
-                let participants: Participants = serde_json::from_reader(file).expect("Failed to read participants.json");
-                Self {
-                    participants,
+// When compiling to web using trunk:
+#[cfg(target_arch = "wasm32")]
+fn main() {
+    use eframe::wasm_bindgen::JsCast as _;
+
+    // Redirect `log` message to `console.log` and friends:
+    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
+
+    let web_options = eframe::WebOptions::default();
+
+    wasm_bindgen_futures::spawn_local(async {
+
+        let window = web_sys::window().expect("No window");
+
+        /*let location = window.location();
+        let href = location.href().expect("Failed to get href");*/
+
+        let document = window
+            .document()
+            .expect("No document");
+
+        let canvas = document
+            .get_element_by_id("the_canvas_id")
+            .expect("Failed to find the_canvas_id")
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .expect("the_canvas_id was not a HtmlCanvasElement");
+
+        let start_result = eframe::WebRunner::new()
+            .start(
+                canvas,
+                web_options,
+                Box::new(|cc| Ok(Box::new(client::HttpApp::new(cc)))),
+            )
+            .await;
+
+        // Remove the loading text and spinner:
+        if let Some(loading_text) = document.get_element_by_id("loading_text") {
+            match start_result {
+                Ok(_) => {
+                    loading_text.remove();
                 }
-            }
-            Err(error) => {
-                if error.kind() == ErrorKind::NotFound {
-                    let participants = Participants::default();
-                    let file = std::fs::File::create("participants.json").expect("Failed to create participants.json");
-                    serde_json::to_writer_pretty(file, &participants).expect("Failed to write participants.json");
-                }
-                Self {
-                    participants: Participants::default(),
+                Err(e) => {
+                    loading_text.set_inner_html(
+                        "<p> The app has crashed. See the developer console for details. </p>",
+                    );
+                    panic!("Failed to start eframe: {e:?}");
                 }
             }
         }
-    }
-
-    fn new() -> Mutex<Self> {
-        println!("Creating new AppState");
-        Mutex::new(Self::create())
-    }
-
-    fn save(&self) {
-        let file = std::fs::File::create("participants.json").expect("Failed to create participants.json");
-        serde_json::to_writer_pretty(file, &self.participants).expect("Failed to write participants.json");
-    }
-}
-
-#[actix_web::get("/list")]
-async fn list() -> impl Responder {
-    let lock = STATE.lock().expect("Failed to lock data");
-    let participants = lock.participants.clone();
-    web::Json(participants)
-}
-
-#[actix_web::post("/add_nickname")]
-async fn add_nickname(add_nickname: web::Json<AddNickname>) -> impl Responder {
-    let AddNickname {
-        name,
-        nickname,
-    } = add_nickname.deref();
-    println!("add_nickname: name: {}, nickname: {}", name, nickname);
-
-    let mut lock = STATE.lock().expect("Failed to lock data");
-    let nicknames = lock.participants.names.get_mut(name).expect("Failed to find name");
-    if let None = nicknames.iter().find(|n| n.nickname == nickname.trim()) { //add only if not already present
-        let trim = nickname.trim();
-        if trim.is_empty() {
-            return web::Json(lock.participants.clone());
-        }
-        nicknames.push(Nickname {
-            nickname: nickname.trim().to_string(),
-            votes: Vec::new(),
-        });
-    }
-    lock.save();
-    web::Json(lock.participants.clone())
-}
-
-#[actix_web::post("/vote_nickname")]
-async fn vote_nickname(vote_nickname: web::Json<VoteNickname>) -> impl Responder {
-    let VoteNickname {
-        name,
-        nickname,
-        voter,
-    } = vote_nickname.deref();
-    println!("vote_nickname: name: {}, nickname: {}, voter: {}", name, nickname, voter);
-
-    let mut lock = STATE.lock().expect("Failed to lock data");
-
-    let nicknames = lock.participants.names.get_mut(name).expect("Failed to find name");
-
-    //remove from all other nicknames
-    for nickname in nicknames.iter_mut() {
-        nickname.votes.retain(|v| *v != *voter);
-    }
-
-    if let Some(nickname) = nicknames.iter_mut().find(|n| n.nickname == *nickname) {
-        nickname.votes.push(voter.clone());
-    }
-    lock.save();
-    web::Json(lock.participants.clone())
-}
-
-#[actix_web::post("/delete_nickname")]
-async fn delete_nickname(delete_nickname: web::Json<DeleteNickname>) -> impl Responder {
-    let DeleteNickname {
-        name,
-        nickname,
-    } = delete_nickname.deref();
-
-    println!("delete_nickname: name: {}, nickname: {}", name, nickname);
-
-    let mut lock = STATE.lock().expect("Failed to lock data");
-
-    let nicknames = lock.participants.names.get_mut(name).expect("Failed to find name");
-    nicknames.retain(|n| n.nickname != *nickname);
-    lock.save();
-    web::Json(lock.participants.clone())
-}
-
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    // install global subscriber configured based on RUST_LOG envvar.
-    tracing_subscriber::registry()
-        .with(fmt::layer().pretty())
-        .with(EnvFilter::from_default_env())
-        .init();
-
-    HttpServer::new(|| {
-        let cors = Cors::permissive();
-
-        App::new()
-            .wrap(Logger::default())
-            .wrap(cors)
-            .configure(routes)
-            .service(Files::new("assets", "client/dist/assets").show_files_listing())
-            .service(Files::new("", "client/dist/").index_file("index.html"))
-
-    })
-        .keep_alive(KeepAlive::Os)
-        .bind(("0.0.0.0", 8080))?
-        .run()
-        .await
-}
-
-fn routes(cfg: &mut ServiceConfig) {
-    cfg.service(list);
-    cfg.service(add_nickname);
-    cfg.service(delete_nickname);
-    cfg.service(vote_nickname);
+    });
 }
