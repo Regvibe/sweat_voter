@@ -95,6 +95,8 @@ impl App for HttpApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::top("header").show_inside(ui, |ui| {
+				
+				ui.add_space(200.0);
 
                 if ui.button("Rafraichir").clicked() {
                     self.request_name();

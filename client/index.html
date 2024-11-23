@@ -48,21 +48,20 @@
 <body>
     <!-- The WASM code will resize the canvas dynamically -->
     <!-- the id is hardcoded in main.rs . so, make sure both match. -->
-
+	
 	<header class="header">
 		
 			<img class="banner" src="assets\banner.png" alt="Banner">
 			
 		</header>
-	
-	
+		
 	<div class="description">
 	
 	<p>Pour suivre les petites traditions du lycée Corneille, nous devons proposer des surnoms aux autres pour les sweats.</p>
 			
 	</div>
 	
-	
+	<div class="instr">
 	<div class="dropdown">
         <button class="dropbtn">Instructions</button>
         <div class="dropdown-content" id="myDropdown">
@@ -76,6 +75,7 @@
 		</ul>
         </div>
     </div>
+	</div>
 	
 	<script src="assets/script.js"></script>
 	
@@ -84,10 +84,11 @@
 	
 	
 	
-	<div class="canvas_c">
+	<div id="egui-container">
 	<canvas id="the_canvas_id"></canvas>
 	</div>
-    
+	
+	
 
     <!-- the loading spinner will be removed in main.rs -->
     <div class="centered" id="loading_text">
