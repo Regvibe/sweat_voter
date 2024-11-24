@@ -18,6 +18,7 @@ pub struct HttpApp {
     editor_selector: EditorSelector,
     class_selector: ClassSelector,
     person_selector: PersonSelector,
+    ctx: egui::Context,
 }
 
 impl HttpApp {
@@ -26,6 +27,7 @@ impl HttpApp {
         where T: Send + 'static + FnOnce(String) -> Option<IncomingPacket>
     {
         let new_sender = self.sender.clone();
+        let ctx = self.ctx.clone();
 
         ehttp::fetch(request, move |response| {
             let response = response.map(|result| String::from_utf8(result.bytes));
@@ -33,6 +35,7 @@ impl HttpApp {
                 let packet = deserializer(response);
                 if let Some(packet) = packet {
                     let _ = new_sender.send(packet).expect("Failed to send packet");
+                    ctx.request_repaint();
                 }
             }
         });
@@ -73,7 +76,9 @@ impl HttpApp {
 
     fn check_incoming(&mut self) {
         let mut refresh_profiles = false;
+        let mut received_something = false;
         for message in self.incoming_message.try_iter() {
+            received_something = true;
             match message {
                 IncomingPacket::ClassList(class_list) => {
                     self.class_selector.set_classes(class_list);
@@ -90,7 +95,9 @@ impl HttpApp {
         }
     }
 
-    pub fn new(_cc: &eframe::CreationContext) -> Self {
+    pub fn new(ctx: &eframe::CreationContext) -> Self {
+
+        let ctx = ctx.egui_ctx.clone();
 
         let (sender, incoming_message) = mpsc::channel();
         let mut this = Self {
@@ -99,6 +106,7 @@ impl HttpApp {
             editor_selector: EditorSelector::new(),
             class_selector: ClassSelector::new(),
             person_selector: PersonSelector::new(),
+            ctx,
         };
         this.request_class_list();
         this
@@ -109,7 +117,9 @@ impl HttpApp {
 impl App for HttpApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
         self.check_incoming();
+
         egui::CentralPanel::default().show(ctx, |ui| {
 
             egui::TopBottomPanel::top("header").show_inside(ui, |ui| {
@@ -145,6 +155,7 @@ impl App for HttpApp {
                 _ => {}
             }
         });
+
     }
 }
 
