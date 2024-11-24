@@ -1,3 +1,6 @@
+
+pub mod packets;
+
 use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
@@ -17,34 +20,18 @@ impl Default for Nickname {
 }
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Participants {
-    pub names: BTreeMap<String, Vec<Nickname>>,
+pub struct Group {
+    pub profiles: BTreeMap<String, (String, Vec<Nickname>)>,
 }
 
-impl Default for Participants {
+/*impl Default for Group {
     fn default() -> Self {
         let mut names = BTreeMap::new();
         names.insert("template 1".to_string(), vec![Nickname::default()]);
         names.insert("template 2".to_string(), vec![Nickname::default()]);
         Self { names }
     }
-}
+}*/
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct AddNickname {
-    pub name: String,
-    pub nickname: String,
-}
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct DeleteNickname {
-    pub name: String,
-    pub nickname: String,
-}
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct VoteNickname {
-    pub name: String,
-    pub nickname: String,
-    pub voter: String,
-}
