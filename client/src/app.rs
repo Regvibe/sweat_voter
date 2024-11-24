@@ -76,9 +76,7 @@ impl HttpApp {
 
     fn check_incoming(&mut self) {
         let mut refresh_profiles = false;
-        let mut received_something = false;
         for message in self.incoming_message.try_iter() {
-            received_something = true;
             match message {
                 IncomingPacket::ClassList(class_list) => {
                     self.class_selector.set_classes(class_list);
