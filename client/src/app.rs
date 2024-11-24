@@ -146,42 +146,5 @@ impl App for HttpApp {
             }
         });
     }
-
-
-    /*fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.check_incoming();
-
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::TopBottomPanel::top("header").show_inside(ui, |ui| {
-
-				ui.add_space(200.0);
-
-                if ui.button("Rafraichir").clicked() {
-                    self.request_name();
-                }
-
-                let reponse = ui.add(egui::TextEdit::singleline(&mut self.editor_name).hint_text("Nom Prénom"));
-                if reponse.changed() {
-                    self.update_try_edit();
-                }
-            });
-
-            if let Some(names) = &mut self.names {
-                if self.can_try_edit {
-                    names.display_name_selector(ui);
-                    let action = names.display_nickname_selector(ui, &self.editor_name);
-                    match action {
-                        Action::Propose(add_nickname) => self.propose_nickname(add_nickname),
-                        Action::Delete(delete_nickname) => self.delete_nickname(delete_nickname),
-                        Action::Vote(vote_nickname) => self.vote_nickname(vote_nickname),
-                        _ => (),
-                    }
-                }
-            } else {
-                ui.add(Spinner::new());
-                ui.label("Loading...");
-            }
-        });
-    }*/
 }
 
