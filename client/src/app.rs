@@ -1,130 +1,159 @@
+use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender};
 use eframe::App;
-use egui::Spinner;
-use oneshot::{Receiver, TryRecvError};
-use common::{AddNickname, DeleteNickname, Participants, VoteNickname};
-use crate::name_selector::{Action, NamesSelector};
+use common::packets::c2s::{AddNickname, AskForPersonProfile, DeleteNickname, RequestKind, VoteNickname};
+use common::packets::s2c::{ClassList, PersonProfileResponse};
+use crate::class_selector::ClassSelector;
+use crate::editor_selector::EditorSelector;
+use crate::person_selector::{Action, PersonSelector};
+
+enum IncomingPacket {
+    ClassList(ClassList),
+    PersonProfileResponse(PersonProfileResponse),
+}
 
 pub struct HttpApp {
-    names: Option<NamesSelector>,
-    incoming_message: Option<Receiver<Participants>>,
-    pub editor_name: String,
-    can_try_edit: bool,
+    incoming_message: Receiver<IncomingPacket>,
+    sender: Sender<IncomingPacket>,
+    editor_selector: EditorSelector,
+    class_selector: ClassSelector,
+    person_selector: PersonSelector,
+    ctx: egui::Context,
 }
 
 impl HttpApp {
 
-    fn fetch(&mut self, request: ehttp::Request) {
-        let (tx, rx) = oneshot::channel();
-        self.incoming_message = Some(rx);
+    fn fetch<T>(&self, request: ehttp::Request, deserializer: T)
+        where T: Send + 'static + FnOnce(String) -> Option<IncomingPacket>
+    {
+        let new_sender = self.sender.clone();
+        let ctx = self.ctx.clone();
 
         ehttp::fetch(request, move |response| {
-            let names = response.map(|result| String::from_utf8(result.bytes));
-            if let Ok(Ok(names)) = names {
-                let participants: Participants = serde_json::from_str(&names).expect(&names);
-                let _ = tx.send(participants);
+            let response = response.map(|result| String::from_utf8(result.bytes));
+            if let Ok(Ok(response)) = response {
+                let packet = deserializer(response);
+                if let Some(packet) = packet {
+                    let _ = new_sender.send(packet).expect("Failed to send packet");
+                    ctx.request_repaint();
+                }
             }
         });
     }
 
-    fn request_name(&mut self) {
-        let request = ehttp::Request::get("list");
-        self.fetch(request);
+    fn request_class_list(&mut self) {
+        let request = ehttp::Request::get("class_list");
+        self.fetch(request, |response| {
+            let class_list: ClassList = serde_json::from_str(&response).expect("Failed to parse class list");
+            Some(IncomingPacket::ClassList(class_list))
+        });
+    }
+
+    const PROFILE_RESPONSE_HANDLER: fn(String) -> Option<IncomingPacket> = |response| {
+        let person_profile_response: PersonProfileResponse = serde_json::from_str(&response).expect("Failed to parse person profile response");
+        Some(IncomingPacket::PersonProfileResponse(person_profile_response))
+    };
+
+    fn request_person_profile(&mut self, ask_for_person_profile: AskForPersonProfile) {
+        let request = ehttp::Request::json("person_profile", &ask_for_person_profile).expect("Failed to create request");
+        self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
     }
 
     fn propose_nickname(&mut self, add_nickname: AddNickname) {
         let request = ehttp::Request::json("add_nickname", &add_nickname).expect("Failed to create request");
-        self.fetch(request);
+        self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
     }
 
     fn delete_nickname(&mut self, delete_nickname: DeleteNickname) {
         let request = ehttp::Request::json("delete_nickname", &delete_nickname).expect("Failed to create request");
-        self.fetch(request);
+        self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
     }
 
     fn vote_nickname(&mut self, vote_nickname: VoteNickname) {
         let request = ehttp::Request::json("vote_nickname", &vote_nickname).expect("Failed to create request");
-        self.fetch(request);
+        self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
     }
 
     fn check_incoming(&mut self) {
-        if let Some(rx) = &self.incoming_message {
-            match rx.try_recv() {
-                Ok(participants) => {
-                    self.names = Some(match self.names.take() {
-                        None => NamesSelector {
-                                participants,
-                                selected: "".to_string(),
-                                new_nickname: "".to_string(),
-                            },
-                        Some(old) => NamesSelector {
-                                participants,
-                                ..old
-                            }
-                        })
-                },
-                Err(TryRecvError::Disconnected) => {
-                    self.incoming_message = None;
-                },
-                _ => {}
+        let mut refresh_profiles = false;
+        for message in self.incoming_message.try_iter() {
+            match message {
+                IncomingPacket::ClassList(class_list) => {
+                    self.class_selector.set_classes(class_list);
+                    refresh_profiles = true;
+                }
+                IncomingPacket::PersonProfileResponse(person_profile_response) => self.person_selector.set_persons(person_profile_response),
+            }
+        }
+
+        if refresh_profiles && self.person_selector.is_empty() {
+            if let Some(selected) = self.class_selector.get_selected() {
+                self.request_person_profile(AskForPersonProfile { class: selected.to_string(), editor: "".to_string(), password: "".to_string(), kind: RequestKind::All })
             }
         }
     }
 
-    fn update_try_edit(&mut self) {
-        self.can_try_edit = self.names.as_ref().is_some_and(|names| {
-            names.participants.names.contains_key(&self.editor_name)
-        });
-    }
+    pub fn new(ctx: &eframe::CreationContext) -> Self {
 
-    pub fn new(_cc: &eframe::CreationContext) -> Self {
+        let ctx = ctx.egui_ctx.clone();
+
+        let (sender, incoming_message) = mpsc::channel();
         let mut this = Self {
-            names: None,
-            editor_name: "".to_string(),
-            incoming_message: None,
-            can_try_edit: false,
+            incoming_message,
+            sender,
+            editor_selector: EditorSelector::new(),
+            class_selector: ClassSelector::new(),
+            person_selector: PersonSelector::new(),
+            ctx,
         };
-        this.request_name();
+        this.request_class_list();
         this
     }
 }
 
 
 impl App for HttpApp {
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
         self.check_incoming();
 
         egui::CentralPanel::default().show(ctx, |ui| {
+
             egui::TopBottomPanel::top("header").show_inside(ui, |ui| {
-				
-				ui.add_space(200.0);
+                ui.add_space(200.0); // Benj I'm going to kill you
+                //if ui.button("Rafraichir").clicked() { self.request_class_list(); } //refresh is totally silent now
 
-                if ui.button("Rafraichir").clicked() {
-                    self.request_name();
-                }
+                let class_updated = self.class_selector.update(ui);
+                let editor_updated = self.editor_selector.update(ui);
 
-                
-                let reponse = ui.add(egui::TextEdit::singleline(&mut self.editor_name).hint_text("Nom Prénom"));
-                if reponse.changed() {
-                    self.update_try_edit();
+                if class_updated || editor_updated {
+                    if let Some(selected) = self.class_selector.get_selected() {
+                        self.request_person_profile(AskForPersonProfile { class: selected.to_string(), editor: self.editor_selector.get_name().to_string(), password: self.editor_selector.get_password().to_string(), kind: RequestKind::All })
+                    }
                 }
             });
 
-            if let Some(names) = &mut self.names {
-                if self.can_try_edit {
-                    names.display_name_selector(ui);
-                    let action = names.display_nickname_selector(ui, &self.editor_name);
-                    match action {
-                        Action::Propose(add_nickname) => self.propose_nickname(add_nickname),
-                        Action::Delete(delete_nickname) => self.delete_nickname(delete_nickname),
-                        Action::Vote(vote_nickname) => self.vote_nickname(vote_nickname),
-                        _ => (),
-                    }
-                }
-            } else {
-                ui.add(Spinner::new());
-                ui.label("Loading...");
+            let requested_profiles = self.person_selector.display_name_selector(ui);
+            if !requested_profiles.is_empty()
+                && self.class_selector.get_selected().is_some() {
+                self.request_person_profile(AskForPersonProfile{
+                    class: self.class_selector.get_selected().unwrap().to_string(),
+                    editor: self.editor_selector.get_name().to_string(),
+                    password: self.editor_selector.get_password().to_string(),
+                    kind: RequestKind::Custom(requested_profiles),
+                })
+            }
+
+            let action = self.person_selector.update_nickname_selector(ui, self.class_selector.get_selected(), &self.editor_selector.get_name(), &self.editor_selector.get_password());
+            match action {
+                Action::Propose(add_nickname) => self.propose_nickname(add_nickname),
+                Action::Delete(delete_nickname) => self.delete_nickname(delete_nickname),
+                Action::Vote(vote_nickname) => self.vote_nickname(vote_nickname),
+                _ => {}
             }
         });
+
     }
 }
 
