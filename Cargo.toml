@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["client", "common", "server"]
+members = ["client", "common", "server", "android_app/src/main/rust"]
 
 [workspace.dependencies]
 log = "0.4.22"

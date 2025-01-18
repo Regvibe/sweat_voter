@@ -5,6 +5,9 @@ dist
 target
 target_ra
 target_wasm
+.gradle
+/build
+/android_app/build
 
 # https://github.com/lycheeverse/lychee
 .lycheecache

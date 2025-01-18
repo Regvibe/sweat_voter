@@ -1,6 +1,7 @@
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 use eframe::App;
+use log::warn;
 use common::packets::c2s::{AddNickname, AskForPersonProfile, DeleteNickname, RequestKind, VoteNickname};
 use common::packets::s2c::{ClassList, PersonProfileResponse};
 use crate::class_selector::ClassSelector;
@@ -21,7 +22,13 @@ pub struct HttpApp {
     ctx: egui::Context,
 }
 
+
+
 impl HttpApp {
+    #[cfg(not(target_arch = "wasm32"))]
+    const ROOT: &'static str = "https://sweat.corneille-rouen.xyz/";
+    #[cfg(target_arch = "wasm32")]
+    const ROOT: &'static str = "";
 
     fn fetch<T>(&self, request: ehttp::Request, deserializer: T)
         where T: Send + 'static + FnOnce(String) -> Option<IncomingPacket>
@@ -31,23 +38,34 @@ impl HttpApp {
 
         ehttp::fetch(request, move |response| {
             let response = response.map(|result| String::from_utf8(result.bytes));
-            if let Ok(Ok(response)) = response {
-                let packet = deserializer(response);
-                if let Some(packet) = packet {
-                    let _ = new_sender.send(packet).expect("Failed to send packet");
-                    ctx.request_repaint();
+            match response {
+                Err(e) => {
+                    warn!("Failed to fetch: {}", e);
+                    return;
+                }
+                Ok(Err(e)) => {
+                    warn!("Failed to fetch: {}", e);
+                    return;
+                }
+                Ok(Ok(response)) => {
+                    let packet = deserializer(response);
+                    if let Some(packet) = packet {
+                        let _ = new_sender.send(packet).expect("Failed to send packet");
+                        ctx.request_repaint();
+                    }
                 }
             }
         });
     }
 
     fn request_class_list(&mut self) {
-        let request = ehttp::Request::get("class_list");
+        let request = ehttp::Request::get(format!("{}class_list", Self::ROOT));
         self.fetch(request, |response| {
             let class_list: ClassList = serde_json::from_str(&response).expect("Failed to parse class list");
             Some(IncomingPacket::ClassList(class_list))
         });
     }
+
 
     const PROFILE_RESPONSE_HANDLER: fn(String) -> Option<IncomingPacket> = |response| {
         let person_profile_response: PersonProfileResponse = serde_json::from_str(&response).expect("Failed to parse person profile response");
@@ -55,22 +73,22 @@ impl HttpApp {
     };
 
     fn request_person_profile(&mut self, ask_for_person_profile: AskForPersonProfile) {
-        let request = ehttp::Request::json("person_profile", &ask_for_person_profile).expect("Failed to create request");
+        let request = ehttp::Request::json( format!("{}person_profile", Self::ROOT), &ask_for_person_profile).expect("Failed to create request");
         self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
     }
 
     fn propose_nickname(&mut self, add_nickname: AddNickname) {
-        let request = ehttp::Request::json("add_nickname", &add_nickname).expect("Failed to create request");
+        let request = ehttp::Request::json(format!("{}add_nickname", Self::ROOT), &add_nickname).expect("Failed to create request");
         self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
     }
 
     fn delete_nickname(&mut self, delete_nickname: DeleteNickname) {
-        let request = ehttp::Request::json("delete_nickname", &delete_nickname).expect("Failed to create request");
+        let request = ehttp::Request::json(format!("{}delete_nickname", Self::ROOT), &delete_nickname).expect("Failed to create request");
         self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
     }
 
     fn vote_nickname(&mut self, vote_nickname: VoteNickname) {
-        let request = ehttp::Request::json("vote_nickname", &vote_nickname).expect("Failed to create request");
+        let request = ehttp::Request::json(format!("{}vote_nickname", Self::ROOT), &vote_nickname).expect("Failed to create request");
         self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
     }
 
@@ -121,8 +139,9 @@ impl App for HttpApp {
         egui::CentralPanel::default().show(ctx, |ui| {
 
             egui::TopBottomPanel::top("header").show_inside(ui, |ui| {
+                #[cfg(target_arch = "wasm32")]
                 ui.add_space(200.0); // Benj I'm going to kill you
-                //if ui.button("Rafraichir").clicked() { self.request_class_list(); } //refresh is totally silent now
+                // ugliest way to leave free space to vote
 
                 let class_updated = self.class_selector.update(ui);
                 let editor_updated = self.editor_selector.update(ui);

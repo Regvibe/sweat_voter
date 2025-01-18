@@ -1,8 +1,9 @@
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
+
 // When compiling natively:
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(any(target_arch = "wasm32", target_os = "android")))]
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
@@ -38,9 +39,6 @@ fn main() {
 
         let window = web_sys::window().expect("No window");
 
-        /*let location = window.location();
-        let href = location.href().expect("Failed to get href");*/
-
         let document = window
             .document()
             .expect("No document");
@@ -74,4 +72,10 @@ fn main() {
             }
         }
     });
+}
+
+// When compiling to Android:
+#[cfg(target_os = "android")]
+fn main() {
+    unreachable!()
 }
