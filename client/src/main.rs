@@ -19,7 +19,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "sweat select client",
+        "sweat selector client",
         native_options,
         Box::new(|cc| Ok(Box::new(client::HttpApp::new(cc)))),
     )
@@ -74,7 +74,7 @@ fn main() {
     });
 }
 
-// When compiling to Android:
+// Decoy to make the compiler happy:
 #[cfg(target_os = "android")]
 fn main() {
     unreachable!()

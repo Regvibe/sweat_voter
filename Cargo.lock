@@ -354,6 +354,7 @@ dependencies = [
  "android_logger",
  "client",
  "eframe",
+ "egui-winit",
  "log",
 ]
 

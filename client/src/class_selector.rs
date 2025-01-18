@@ -35,7 +35,7 @@ impl ClassSelector {
             });
         });
 
-        return changed;
+        changed
     }
 
     pub fn get_selected(&self) -> Option<&str> {

@@ -1,5 +1,6 @@
 #[cfg(target_os = "android")]
 use android_activity::AndroidApp;
+#[cfg(target_os = "android")]
 use client::HttpApp;
 
 #[cfg(target_os = "android")]
@@ -15,7 +16,7 @@ fn main(app: AndroidApp) {
         ..Default::default()
     };
     eframe::run_native(
-        "My egui App",
+        "sweat selector client",
         options,
         Box::new(|cc| Ok(Box::new(HttpApp::new(cc)))),
     )

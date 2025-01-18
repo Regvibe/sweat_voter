@@ -112,14 +112,14 @@ impl HttpApp {
     }
 
     pub fn new(ctx: &eframe::CreationContext) -> Self {
-
+        let editor_selector = EditorSelector::new(ctx.storage);
         let ctx = ctx.egui_ctx.clone();
 
         let (sender, incoming_message) = mpsc::channel();
         let mut this = Self {
             incoming_message,
             sender,
-            editor_selector: EditorSelector::new(),
+            editor_selector,
             class_selector: ClassSelector::new(),
             person_selector: PersonSelector::new(),
             ctx,
@@ -132,7 +132,7 @@ impl HttpApp {
 
 impl App for HttpApp {
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
 
         self.check_incoming();
 
@@ -145,6 +145,10 @@ impl App for HttpApp {
 
                 let class_updated = self.class_selector.update(ui);
                 let editor_updated = self.editor_selector.update(ui);
+
+                if let (Some(storage), true) = (frame.storage_mut(), editor_updated) {
+                    self.editor_selector.save(storage);
+                }
 
                 if class_updated || editor_updated {
                     if let Some(selected) = self.class_selector.get_selected() {
