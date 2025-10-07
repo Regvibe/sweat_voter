@@ -2,13 +2,13 @@ use std::collections::BTreeMap;
 
 use egui::RichText;
 use common::packets::c2s::{AddNickname, DeleteNickname, VoteNickname};
-use common::packets::s2c::{PersonProfileResponse, VoteCount};
+use common::packets::s2c::{Permissions, PersonProfileResponse, VoteCount};
 
 pub struct PersonSelector {
     pub persons: BTreeMap<String, BTreeMap<String, VoteCount>>,
     pub selected: String,
     pub new_nickname: String,
-    pub allow_to_modify: bool,
+    pub permissions: Permissions,
 }
 
 
@@ -25,7 +25,7 @@ impl PersonSelector {
             persons: BTreeMap::new(),
             selected: String::new(),
             new_nickname: String::new(),
-            allow_to_modify: false,
+            permissions: Permissions::NONE,
         }
     }
 
@@ -35,13 +35,13 @@ impl PersonSelector {
 
     pub fn set_persons(&mut self, person_profile_response: PersonProfileResponse) {
         match person_profile_response {
-            PersonProfileResponse { allowed_to_modify, profiles, partial_response: true,  } => { //the server only updated some participants
+            PersonProfileResponse { permissions, profiles, should_overwrite: false,  } => { //the server only updated some participants
                 self.persons.extend(profiles);
-                self.allow_to_modify = allowed_to_modify;
+                self.permissions = permissions;
             }
-            PersonProfileResponse { allowed_to_modify, profiles, .. } => { // the server sent the whole list in one go
+            PersonProfileResponse { permissions, profiles, .. } => { // the server sent the whole list in one go
                 self.persons = profiles; // we replace the whole list, and **do not** keep the old values
-                self.allow_to_modify = allowed_to_modify;
+                self.permissions = permissions;
             }
         }
 
@@ -75,7 +75,15 @@ impl PersonSelector {
                     ui.end_row();
 
                     for (nickname, vote) in nicknames.iter() {
-                        ui.label(nickname);
+                        let response = ui.label(nickname);
+                        if !vote.voters.is_empty() {
+                            response.on_hover_ui(|ui| {
+                                ui.heading("Voters");
+                                for voter in &vote.voters {
+                                    ui.label(voter);
+                                }
+                            });
+                        }
 
                         let color = if vote.contain_you {
                             egui::Color32::from_rgb(255, 100, 100)
@@ -86,8 +94,8 @@ impl PersonSelector {
                         ui.label(RichText::new(vote.count.to_string())
                             .color(color));
 
-                        if self.allow_to_modify
-                            && self.persons.contains_key(editor_name)
+                        if self.permissions.vote
+                            //&& self.persons.contains_key(editor_name) // Todo: Might need to remove that
                             && ui.button("Voter").clicked() { //lazy evaluation hide the button if your not in the list
                             action = Action::Vote(VoteNickname {
                                 class: class.to_string(),
@@ -98,10 +106,15 @@ impl PersonSelector {
                             });
                         }
 
-                        if self.allow_to_modify && editor_name == self.selected && ui.button("Supprimer").clicked() {
+                        let self_deletion = self.permissions.delete_own && editor_name == self.selected;
+                        let admin_deletion = self.permissions.delete_other;
+                        let can_delete = self_deletion || admin_deletion;
+
+                        if can_delete && ui.button("Supprimer").clicked() {
                             action = Action::Delete(DeleteNickname {
                                 class: class.to_string(),
                                 editor: editor_name.to_string(),
+                                name: self.selected.clone(),
                                 nickname: nickname.clone(),
                                 password: password.to_string(),
                             });
@@ -110,7 +123,7 @@ impl PersonSelector {
                     }
                 });
 
-                if self.allow_to_modify {
+                if self.permissions.suggest {
                     ui.add(egui::TextEdit::singleline(&mut self.new_nickname).hint_text(format!("nouveau surnom pour {}", self.selected)).char_limit(30));
                     if ui.button("Proposer").clicked() {
                         action = Action::Propose(AddNickname {

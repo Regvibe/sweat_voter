@@ -6,6 +6,7 @@ target
 target_ra
 target_wasm
 .gradle
+admins.json
 /build
 /android_app/build
 

@@ -1,7 +1,7 @@
 
 pub mod packets;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
@@ -10,28 +10,15 @@ pub struct Nickname {
     pub votes: Vec<String>,
 }
 
-impl Default for Nickname {
-    fn default() -> Self {
-        Self {
-            nickname: "template nickname".to_string(),
-            votes: Vec::new(),
-        }
-    }
-}
-
+/// structure that represent a "class" of people, with their nicknames
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Group {
+    // name, (password, nicknames)
     pub profiles: BTreeMap<String, (String, Vec<Nickname>)>,
 }
 
-/*impl Default for Group {
-    fn default() -> Self {
-        let mut names = BTreeMap::new();
-        names.insert("template 1".to_string(), vec![Nickname::default()]);
-        names.insert("template 2".to_string(), vec![Nickname::default()]);
-        Self { names }
-    }
-}*/
-
-
+#[derive(Deserialize, Serialize, Debug, Clone)]
+pub struct AdminList {
+    pub admins: HashSet<String>,
+}
 

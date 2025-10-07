@@ -2657,7 +2657,6 @@ dependencies = [
  "actix-web",
  "anyhow",
  "common",
- "log",
  "serde",
  "serde_json",
  "tracing",
