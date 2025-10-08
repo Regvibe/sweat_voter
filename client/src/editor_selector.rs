@@ -25,7 +25,7 @@ impl EditorSelector {
         let name_response = ui
             .add(
                 egui::TextEdit::singleline(&mut self.name)
-                    .hint_text("Nom Prénom")
+                    .hint_text("Prénom")
                     .char_limit(30),
             )
             .lost_focus();
