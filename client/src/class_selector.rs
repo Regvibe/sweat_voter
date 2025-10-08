@@ -1,16 +1,16 @@
-use egui::Spinner;
 use common::packets::s2c::ClassList;
+use egui::Spinner;
 
 pub struct ClassSelector {
     classes: Vec<String>,
-    selected: usize
+    selected: usize,
 }
 
 impl ClassSelector {
     pub fn new() -> Self {
         Self {
             classes: Vec::new(),
-            selected: 0
+            selected: 0,
         }
     }
 

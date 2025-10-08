@@ -1,31 +1,30 @@
-
 pub mod c2s {
     use serde::{Deserialize, Serialize};
 
     #[derive(Deserialize, Serialize, Debug, Clone)]
     pub struct AddNickname {
-        pub class: String, // In what class the action is performed
+        pub class: String,  // In what class the action is performed
         pub editor: String, // who is editing
         pub password: String,
-        pub name: String, // who will receive a new nickname
+        pub name: String,     // who will receive a new nickname
         pub nickname: String, // the proposition
     }
 
     #[derive(Deserialize, Serialize, Debug, Clone)]
     pub struct DeleteNickname {
-        pub class: String, // In what class the action is performed
+        pub class: String,  // In what class the action is performed
         pub editor: String, // who is editing
         pub password: String,
-        pub name: String, // the owner of the nickname
+        pub name: String,     // the owner of the nickname
         pub nickname: String, // which nickname to delete
     }
 
     #[derive(Deserialize, Serialize, Debug, Clone)]
     pub struct VoteNickname {
-        pub class: String, // In what class the action is performed
-        pub name: String, // the owner of the nickname
+        pub class: String,    // In what class the action is performed
+        pub name: String,     // the owner of the nickname
         pub nickname: String, // which nickname to vote for
-        pub voter: String, // who is voting
+        pub voter: String,    // who is voting
         pub password: String,
     }
 
@@ -44,8 +43,8 @@ pub mod c2s {
     }
 }
 pub mod s2c {
-    use std::collections::BTreeMap;
     use serde::{Deserialize, Serialize};
+    use std::collections::BTreeMap;
 
     #[derive(Deserialize, Serialize, Debug, Clone)]
     pub struct ClassList {

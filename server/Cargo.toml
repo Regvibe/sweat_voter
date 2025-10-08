@@ -17,3 +17,4 @@ tracing = { version = "0", features = [
   "release_max_level_warn",
 ] }
 anyhow = "1.0.93"
+log = "0.4.22"

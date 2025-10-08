@@ -20,6 +20,5 @@ fn main(app: AndroidApp) {
         options,
         Box::new(|cc| Ok(Box::new(HttpApp::new(cc)))),
     )
-        .unwrap()
+    .unwrap()
 }
-

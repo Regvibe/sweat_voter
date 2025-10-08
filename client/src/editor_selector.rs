@@ -4,7 +4,6 @@ pub struct EditorSelector {
 }
 
 impl EditorSelector {
-
     const NAME_KEY: &'static str = "name";
     const PASSWORD_KEY: &'static str = "password";
 
@@ -23,8 +22,20 @@ impl EditorSelector {
 
     pub fn update(&mut self, ui: &mut egui::Ui) -> bool {
         ui.label("Login");
-        let name_response = ui.add(egui::TextEdit::singleline(&mut self.name).hint_text("Nom Prénom").char_limit(30)).lost_focus();
-        let password_response = ui.add(egui::TextEdit::singleline(&mut self.password).hint_text("Mot de passe").char_limit(30)).lost_focus();
+        let name_response = ui
+            .add(
+                egui::TextEdit::singleline(&mut self.name)
+                    .hint_text("Nom Prénom")
+                    .char_limit(30),
+            )
+            .lost_focus();
+        let password_response = ui
+            .add(
+                egui::TextEdit::singleline(&mut self.password)
+                    .hint_text("Mot de passe")
+                    .char_limit(30),
+            )
+            .lost_focus();
         (name_response || password_response) && !self.name.is_empty() && !self.password.is_empty()
     }
 

@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
-use egui::RichText;
 use common::packets::c2s::{AddNickname, DeleteNickname, VoteNickname};
 use common::packets::s2c::{Permissions, PersonProfileResponse, VoteCount};
+use egui::RichText;
 
 pub struct PersonSelector {
     pub persons: BTreeMap<String, BTreeMap<String, VoteCount>>,
@@ -10,7 +10,6 @@ pub struct PersonSelector {
     pub new_nickname: String,
     pub permissions: Permissions,
 }
-
 
 pub enum Action {
     Propose(AddNickname),
@@ -35,39 +34,58 @@ impl PersonSelector {
 
     pub fn set_persons(&mut self, person_profile_response: PersonProfileResponse) {
         match person_profile_response {
-            PersonProfileResponse { permissions, profiles, should_overwrite: false,  } => { //the server only updated some participants
+            PersonProfileResponse {
+                permissions,
+                profiles,
+                should_overwrite: false,
+            } => {
+                //the server only updated some participants
                 self.persons.extend(profiles);
                 self.permissions = permissions;
             }
-            PersonProfileResponse { permissions, profiles, .. } => { // the server sent the whole list in one go
+            PersonProfileResponse {
+                permissions,
+                profiles,
+                ..
+            } => {
+                // the server sent the whole list in one go
                 self.persons = profiles; // we replace the whole list, and **do not** keep the old values
                 self.permissions = permissions;
             }
         }
-
     }
 
     pub fn display_name_selector(&mut self, ui: &mut egui::Ui) -> Vec<String> {
-
         let mut profile_requested = Vec::new();
-        egui::SidePanel::left("left_panel").resizable(true).show_inside(ui, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.heading("Participants");
-                ui.label("choisissez un participant pour voir les surnoms");
-                for name in self.persons.keys() {
-                    if ui.selectable_value(&mut self.selected, name.clone(), name.as_str()).changed() { //really consider switching all theses for cow
-                        profile_requested.push(name.clone());
+        egui::SidePanel::left("left_panel")
+            .resizable(true)
+            .show_inside(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.heading("Participants");
+                    ui.label("choisissez un participant pour voir les surnoms");
+                    for name in self.persons.keys() {
+                        if ui
+                            .selectable_value(&mut self.selected, name.clone(), name.as_str())
+                            .changed()
+                        {
+                            //really consider switching all theses for cow
+                            profile_requested.push(name.clone());
+                        }
                     }
-                }
+                });
             });
-        });
         profile_requested
     }
 
-    pub fn update_nickname_selector(&mut self, ui: &mut egui::Ui, class: Option<&str>, editor_name: &str, password: &str) -> Action {
+    pub fn update_nickname_selector(
+        &mut self,
+        ui: &mut egui::Ui,
+        class: Option<&str>,
+        editor_name: &str,
+        password: &str,
+    ) -> Action {
         let mut action = Action::None;
         if let (Some(class), Some(nicknames)) = (class, self.persons.get(&self.selected)) {
-
             egui::ScrollArea::both().show(ui, |ui| {
                 egui::Grid::new("nicknames").striped(true).show(ui, |ui| {
                     ui.heading("Surnoms");
@@ -91,12 +109,13 @@ impl PersonSelector {
                             egui::Color32::from_rgb(100, 100, 255)
                         };
 
-                        ui.label(RichText::new(vote.count.to_string())
-                            .color(color));
+                        ui.label(RichText::new(vote.count.to_string()).color(color));
 
                         if self.permissions.vote
                             //&& self.persons.contains_key(editor_name) // Todo: Might need to remove that
-                            && ui.button("Voter").clicked() { //lazy evaluation hide the button if your not in the list
+                            && ui.button("Voter").clicked()
+                        {
+                            //lazy evaluation hide the button if your not in the list
                             action = Action::Vote(VoteNickname {
                                 class: class.to_string(),
                                 name: self.selected.clone(),
@@ -106,7 +125,8 @@ impl PersonSelector {
                             });
                         }
 
-                        let self_deletion = self.permissions.delete_own && editor_name == self.selected;
+                        let self_deletion =
+                            self.permissions.delete_own && editor_name == self.selected;
                         let admin_deletion = self.permissions.delete_other;
                         let can_delete = self_deletion || admin_deletion;
 
@@ -124,7 +144,11 @@ impl PersonSelector {
                 });
 
                 if self.permissions.suggest {
-                    ui.add(egui::TextEdit::singleline(&mut self.new_nickname).hint_text(format!("nouveau surnom pour {}", self.selected)).char_limit(30));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.new_nickname)
+                            .hint_text(format!("nouveau surnom pour {}", self.selected))
+                            .char_limit(30),
+                    );
                     if ui.button("Proposer").clicked() {
                         action = Action::Propose(AddNickname {
                             class: class.to_string(),

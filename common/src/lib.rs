@@ -1,8 +1,7 @@
-
 pub mod packets;
 
-use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashSet};
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct Nickname {
@@ -21,4 +20,3 @@ pub struct Group {
 pub struct AdminList {
     pub admins: HashSet<String>,
 }
-
