@@ -1,18 +1,27 @@
-use std::collections::BTreeMap;
-
-use common::packets::c2s::{AddNickname, DeleteNickname, VoteNickname};
-use common::packets::s2c::{Permissions, PersonProfileResponse, VoteCount};
+use common::packets::c2s::{DeleteNickname, VoteNickname};
+use common::packets::s2c;
+use common::packets::s2c::NicknameStatut;
+use common::{ClassID, Identity, ProfilID};
 use egui::RichText;
+use std::collections::HashMap;
+
+struct Profile {
+    allowed_to_vote: bool,
+    nicknames: Vec<NicknameStatut>,
+}
 
 pub struct PersonSelector {
-    pub persons: BTreeMap<String, BTreeMap<String, VoteCount>>,
-    pub selected: String,
-    pub new_nickname: String,
-    pub permissions: Permissions,
+    /// contain the profil
+    profiles: HashMap<ProfilID, Profile>,
+    /// who is in which class
+    classes: HashMap<ClassID, Vec<(ProfilID, String)>>,
+    /// current profil viewed
+    selected_profil: Option<ProfilID>,
+    /// edition field for a nickname proposition
+    new_nickname: String,
 }
 
 pub enum Action {
-    Propose(AddNickname),
     Vote(VoteNickname),
     Delete(DeleteNickname),
     None,
@@ -21,147 +30,139 @@ pub enum Action {
 impl PersonSelector {
     pub fn new() -> Self {
         Self {
-            persons: BTreeMap::new(),
-            selected: String::new(),
+            profiles: HashMap::new(),
+            classes: HashMap::new(),
+            selected_profil: None,
             new_nickname: String::new(),
-            permissions: Permissions::NONE,
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.persons.is_empty()
+    pub fn set_classes<T: Iterator<Item = (ClassID, Vec<(ProfilID, String)>)>>(&mut self, iter: T) {
+        let iter = iter.map(|(id, mut profiles)| {
+            profiles.sort_unstable_by(|(_, a), (_, b)| a.cmp(b));
+            (id, profiles)
+        });
+        self.classes = HashMap::from_iter(iter)
     }
 
-    pub fn set_persons(&mut self, person_profile_response: PersonProfileResponse) {
-        match person_profile_response {
-            PersonProfileResponse {
-                permissions,
-                profiles,
-                should_overwrite: false,
-            } => {
-                //the server only updated some participants
-                self.persons.extend(profiles);
-                self.permissions = permissions;
-            }
-            PersonProfileResponse {
-                permissions,
-                profiles,
-                ..
-            } => {
-                // the server sent the whole list in one go
-                self.persons = profiles; // we replace the whole list, and **do not** keep the old values
-                self.permissions = permissions;
-            }
-        }
+    /// used to cache a profil received by the server
+    pub fn set_profil(&mut self, profil: s2c::Profile) {
+        let s2c::Profile {
+            profil_id,
+            mut nicknames,
+            allowed_to_vote,
+        } = profil;
+
+        //always sort by the most voted !
+        nicknames.sort_by(|a, b| b.count.cmp(&a.count));
+
+        self.profiles.insert(
+            profil_id,
+            Profile {
+                allowed_to_vote,
+                nicknames,
+            },
+        );
     }
 
-    pub fn display_name_selector(&mut self, ui: &mut egui::Ui) -> Vec<String> {
-        let mut profile_requested = Vec::new();
+    /// Profil selector, take which class to display and return which profil is requested
+    pub fn display_name_selector(
+        &mut self,
+        ui: &mut egui::Ui,
+        class_id: ClassID,
+    ) -> Option<ProfilID> {
+        let Some(profils) = self.classes.get(&class_id) else {
+            return None;
+        };
+        let mut requested_profil = None;
+
         egui::SidePanel::left("left_panel")
             .resizable(true)
             .show_inside(ui, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.heading("Participants");
                     ui.label("choisissez un participant pour voir les surnoms");
-                    for name in self.persons.keys() {
+                    for (id, name) in profils {
                         if ui
-                            .selectable_value(&mut self.selected, name.clone(), name.as_str())
+                            .selectable_value(&mut self.selected_profil, Some(*id), name.as_str())
                             .changed()
                         {
-                            //really consider switching all theses for cow
-                            profile_requested.push(name.clone());
+                            requested_profil = Some(*id);
                         }
                     }
                 });
             });
-        profile_requested
+        requested_profil
     }
 
-    pub fn update_nickname_selector(
-        &mut self,
-        ui: &mut egui::Ui,
-        class: Option<&str>,
-        editor_name: &str,
-        password: &str,
-    ) -> Action {
+    pub fn update_nickname_selector(&mut self, ui: &mut egui::Ui, identity: Identity) -> Action {
         let mut action = Action::None;
-        if let (Some(class), Some(nicknames)) = (class, self.persons.get(&self.selected)) {
-            egui::ScrollArea::both().show(ui, |ui| {
-                egui::Grid::new("nicknames").striped(true).show(ui, |ui| {
-                    ui.heading("Surnoms");
-                    ui.heading("Votes");
-                    ui.end_row();
+        let Some(id) = self.selected_profil else {
+            return action;
+        };
+        let Some(profil) = self.profiles.get(&id) else {
+            return action;
+        };
 
-                    for (nickname, vote) in nicknames.iter() {
-                        let response = ui.label(nickname);
-                        if !vote.voters.is_empty() {
-                            response.on_hover_ui(|ui| {
-                                ui.heading("Voters");
-                                for voter in &vote.voters {
-                                    ui.label(voter);
-                                }
-                            });
-                        }
+        egui::ScrollArea::both().show(ui, |ui| {
+            egui::Grid::new("nicknames").striped(true).show(ui, |ui| {
+                ui.heading("Surnoms");
+                ui.heading("Votes");
+                ui.end_row();
 
-                        let color = if vote.contain_you {
-                            egui::Color32::from_rgb(255, 100, 100)
-                        } else {
-                            egui::Color32::from_rgb(100, 100, 255)
-                        };
+                for NicknameStatut {
+                    proposition,
+                    count,
+                    contain_you,
+                    allowed_to_be_delete,
+                } in profil.nicknames.iter()
+                {
+                    ui.label(proposition);
 
-                        ui.label(RichText::new(vote.count.to_string()).color(color));
+                    let color = if *contain_you {
+                        egui::Color32::from_rgb(255, 100, 100)
+                    } else {
+                        egui::Color32::from_rgb(100, 100, 255)
+                    };
 
-                        if self.permissions.vote
-                            //&& self.persons.contains_key(editor_name) // Todo: Might need to remove that
-                            && ui.button("Voter").clicked()
-                        {
-                            //lazy evaluation hide the button if your not in the list
-                            action = Action::Vote(VoteNickname {
-                                class: class.to_string(),
-                                name: self.selected.clone(),
-                                nickname: nickname.clone(),
-                                voter: editor_name.to_string(),
-                                password: password.to_string(),
-                            });
-                        }
+                    ui.label(RichText::new(count.to_string()).color(color));
 
-                        let self_deletion =
-                            self.permissions.delete_own && editor_name == self.selected;
-                        let admin_deletion = self.permissions.delete_other;
-                        let can_delete = self_deletion || admin_deletion;
-
-                        if can_delete && ui.button("Supprimer").clicked() {
-                            action = Action::Delete(DeleteNickname {
-                                class: class.to_string(),
-                                editor: editor_name.to_string(),
-                                name: self.selected.clone(),
-                                nickname: nickname.clone(),
-                                password: password.to_string(),
-                            });
-                        }
-                        ui.end_row();
-                    }
-                });
-
-                if self.permissions.suggest {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.new_nickname)
-                            .hint_text(format!("nouveau surnom pour {}", self.selected))
-                            .char_limit(30),
-                    );
-                    if ui.button("Proposer").clicked() {
-                        action = Action::Propose(AddNickname {
-                            class: class.to_string(),
-                            editor: editor_name.to_string(),
-                            password: password.to_string(),
-                            name: self.selected.clone(),
-                            nickname: self.new_nickname.clone(),
+                    if profil.allowed_to_vote && ui.button("Voter").clicked() {
+                        //lazy evaluation hide the button if your not in the list
+                        action = Action::Vote(VoteNickname {
+                            identity: identity.clone(),
+                            nickname: proposition.clone(),
+                            target: id,
                         });
-                        self.new_nickname.clear();
                     }
+
+                    if *allowed_to_be_delete && ui.button("Supprimer").clicked() {
+                        action = Action::Delete(DeleteNickname {
+                            identity: identity.clone(),
+                            nickname: proposition.clone(),
+                            target: id,
+                        });
+                    }
+                    ui.end_row();
                 }
             });
-        }
+
+            if profil.allowed_to_vote {
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.new_nickname)
+                        .hint_text("nouveau surnom")
+                        .char_limit(30),
+                );
+                if ui.button("Proposer").clicked() {
+                    action = Action::Vote(VoteNickname {
+                        identity: identity.clone(),
+                        nickname: self.new_nickname.clone(),
+                        target: id,
+                    });
+                    self.new_nickname.clear();
+                }
+            }
+        });
         action
     }
 }

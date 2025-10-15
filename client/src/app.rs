@@ -1,18 +1,17 @@
 use crate::class_selector::ClassSelector;
 use crate::editor_selector::EditorSelector;
 use crate::person_selector::{Action, PersonSelector};
-use common::packets::c2s::{
-    AddNickname, AskForPersonProfile, DeleteNickname, RequestKind, VoteNickname,
-};
-use common::packets::s2c::{ClassList, PersonProfileResponse};
+use common::packets::c2s::{AskForPersonProfil, DeleteNickname, VoteNickname};
+use common::packets::s2c::{ClassList, Profile};
 use eframe::App;
+use egui::TextBuffer;
 use log::warn;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 
 enum IncomingPacket {
     ClassList(ClassList),
-    PersonProfileResponse(PersonProfileResponse),
+    PersonProfileResponse(Profile),
 }
 
 pub struct HttpApp {
@@ -69,25 +68,19 @@ impl HttpApp {
     }
 
     const PROFILE_RESPONSE_HANDLER: fn(String) -> Option<IncomingPacket> = |response| {
-        let person_profile_response: PersonProfileResponse =
+        let person_profile_response: Profile =
             serde_json::from_str(&response).expect("Failed to parse person profile response");
         Some(IncomingPacket::PersonProfileResponse(
             person_profile_response,
         ))
     };
 
-    fn request_person_profile(&mut self, ask_for_person_profile: AskForPersonProfile) {
+    fn request_person_profile(&mut self, ask_for_person_profile: AskForPersonProfil) {
         let request = ehttp::Request::json(
             format!("{}person_profile", Self::ROOT),
             &ask_for_person_profile,
         )
         .expect("Failed to create request");
-        self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
-    }
-
-    fn propose_nickname(&mut self, add_nickname: AddNickname) {
-        let request = ehttp::Request::json(format!("{}add_nickname", Self::ROOT), &add_nickname)
-            .expect("Failed to create request");
         self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
     }
 
@@ -105,27 +98,26 @@ impl HttpApp {
     }
 
     fn check_incoming(&mut self) {
-        let mut refresh_profiles = false;
         for message in self.incoming_message.try_iter() {
             match message {
                 IncomingPacket::ClassList(class_list) => {
-                    self.class_selector.set_classes(class_list);
-                    refresh_profiles = true;
+                    let ClassList { mut classes } = class_list;
+
+                    self.class_selector.set_classes(
+                        classes
+                            .iter_mut()
+                            .map(|(id, class)| (*id, class.name.take()))
+                            .collect(),
+                    );
+                    self.person_selector.set_classes(
+                        classes
+                            .into_iter()
+                            .map(|(class_id, class)| (class_id, class.profiles)),
+                    )
                 }
                 IncomingPacket::PersonProfileResponse(person_profile_response) => {
-                    self.person_selector.set_persons(person_profile_response)
+                    self.person_selector.set_profil(person_profile_response)
                 }
-            }
-        }
-
-        if refresh_profiles && self.person_selector.is_empty() {
-            if let Some(selected) = self.class_selector.get_selected() {
-                self.request_person_profile(AskForPersonProfile {
-                    class: selected.to_string(),
-                    editor: "".to_string(),
-                    password: "".to_string(),
-                    kind: RequestKind::All,
-                })
             }
         }
     }
@@ -155,17 +147,17 @@ impl App for HttpApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::TopBottomPanel::top("header").show_inside(ui, |ui| {
                 #[cfg(target_arch = "wasm32")]
-                ui.add_space(200.0); // Benj I'm going to kill you
+                ui.add_space(200.0); // Jasmine I'm going to kill you
                                      // ugliest way to leave free space to vote
 
-                let class_updated = self.class_selector.update(ui);
+                let _class_updated = self.class_selector.update(ui);
                 let editor_updated = self.editor_selector.update(ui);
 
                 if let (Some(storage), true) = (frame.storage_mut(), editor_updated) {
                     self.editor_selector.save(storage);
                 }
 
-                if class_updated || editor_updated {
+                /*if class_updated || editor_updated {
                     if let Some(selected) = self.class_selector.get_selected() {
                         self.request_person_profile(AskForPersonProfile {
                             class: selected.to_string(),
@@ -174,27 +166,28 @@ impl App for HttpApp {
                             kind: RequestKind::All,
                         })
                     }
-                }
+                }*/
             });
 
-            let requested_profiles = self.person_selector.display_name_selector(ui);
-            if !requested_profiles.is_empty() && self.class_selector.get_selected().is_some() {
-                self.request_person_profile(AskForPersonProfile {
-                    class: self.class_selector.get_selected().unwrap().to_string(),
-                    editor: self.editor_selector.get_name().to_string(),
-                    password: self.editor_selector.get_password().to_string(),
-                    kind: RequestKind::Custom(requested_profiles),
+            let Some(selected_class) = self.class_selector.get_selected() else {
+                return;
+            };
+
+            // when has chosen a profil to view, we need to fetch it from the server
+            let requested_profiles = self
+                .person_selector
+                .display_name_selector(ui, selected_class);
+            if let Some(profil) = requested_profiles {
+                self.request_person_profile(AskForPersonProfil {
+                    identity: self.editor_selector.get_identity(),
+                    profil,
                 })
             }
 
-            let action = self.person_selector.update_nickname_selector(
-                ui,
-                self.class_selector.get_selected(),
-                &self.editor_selector.get_name(),
-                &self.editor_selector.get_password(),
-            );
+            let action = self
+                .person_selector
+                .update_nickname_selector(ui, self.editor_selector.get_identity());
             match action {
-                Action::Propose(add_nickname) => self.propose_nickname(add_nickname),
                 Action::Delete(delete_nickname) => self.delete_nickname(delete_nickname),
                 Action::Vote(vote_nickname) => self.vote_nickname(vote_nickname),
                 _ => {}

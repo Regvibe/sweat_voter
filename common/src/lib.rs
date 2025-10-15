@@ -1,22 +1,18 @@
 pub mod packets;
 
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Nickname {
-    pub nickname: String,
-    pub votes: Vec<String>,
-}
+/// A shortcut for a profil, this can be used publicly,
+#[derive(Copy, Clone, Debug, Default, Hash, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ProfilID(pub u32);
 
-/// structure that represent a "class" of people, with their nicknames
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct Group {
-    // name, (password, nicknames)
-    pub profiles: BTreeMap<String, (String, Vec<Nickname>)>,
-}
+/// A shortcut for a profil, this can be used publicly,
+#[derive(Copy, Clone, Debug, Default, Hash, Eq, PartialEq, Deserialize, Serialize)]
+pub struct ClassID(pub u32);
 
-#[derive(Deserialize, Serialize, Debug, Clone)]
-pub struct AdminList {
-    pub admins: HashSet<String>,
+#[derive(Deserialize, Serialize, Debug, Clone, Default, Hash, Eq, PartialEq)]
+/// Used to log in
+pub struct Identity {
+    pub name: String,
+    pub password: String,
 }

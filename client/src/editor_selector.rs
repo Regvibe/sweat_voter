@@ -1,3 +1,5 @@
+use common::Identity;
+
 pub struct EditorSelector {
     name: String,
     password: String,
@@ -44,10 +46,10 @@ impl EditorSelector {
         storage.set_string(Self::PASSWORD_KEY, self.password.clone());
     }
 
-    pub fn get_name(&self) -> &str {
-        &self.name
-    }
-    pub fn get_password(&self) -> &str {
-        &self.password
+    pub fn get_identity(&self) -> Identity {
+        Identity {
+            name: self.name.clone(),
+            password: self.password.clone(),
+        }
     }
 }
