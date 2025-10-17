@@ -3,6 +3,13 @@ use common::Identity;
 pub struct EditorSelector {
     name: String,
     password: String,
+    logged: bool,
+}
+
+pub enum LoginAction {
+    Login,
+    Logout,
+    None,
 }
 
 impl EditorSelector {
@@ -19,15 +26,41 @@ impl EditorSelector {
                 .map(|s| s.get_string(Self::PASSWORD_KEY))
                 .flatten()
                 .unwrap_or(String::new()),
+            logged: false,
         }
     }
 
-    pub fn update(&mut self, ui: &mut egui::Ui) -> bool {
+    pub fn set_logged(&mut self, logged: bool) {
+        self.logged = logged;
+    }
+
+    fn display_logout(&mut self, ui: &mut egui::Ui) -> bool {
+        ui.label(format!("connecté en tant que {}", self.name));
+        ui.button("se déconnecter").clicked()
+    }
+
+    pub fn update(&mut self, ui: &mut egui::Ui) -> LoginAction {
+        if self.logged {
+            if self.display_logout(ui) {
+                LoginAction::Logout
+            } else {
+                LoginAction::None
+            }
+        } else {
+            if self.display_login(ui) {
+                LoginAction::Login
+            } else {
+                LoginAction::None
+            }
+        }
+    }
+
+    fn display_login(&mut self, ui: &mut egui::Ui) -> bool {
         ui.label("Login");
         let name_response = ui
             .add(
                 egui::TextEdit::singleline(&mut self.name)
-                    .hint_text("Prénom")
+                    .hint_text("NOM Prénom")
                     .char_limit(30),
             )
             .lost_focus();
@@ -38,12 +71,21 @@ impl EditorSelector {
                     .char_limit(30),
             )
             .lost_focus();
-        (name_response || password_response) && !self.name.is_empty() && !self.password.is_empty()
+
+        ui.button("connection").clicked()
+            || (name_response || password_response)
+                && !self.name.is_empty()
+                && !self.password.is_empty()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
     }
 
     pub fn save(&self, storage: &mut dyn eframe::Storage) {
         storage.set_string(Self::NAME_KEY, self.name.clone());
         storage.set_string(Self::PASSWORD_KEY, self.password.clone());
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.name.is_empty() | self.password.is_empty()
     }
 
     pub fn get_identity(&self) -> Identity {

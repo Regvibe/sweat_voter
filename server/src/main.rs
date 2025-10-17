@@ -4,20 +4,23 @@ use crate::data_server::{compat, serialization, DataServer, NickNameProposition}
 use actix_cors::Cors;
 use actix_files::Files;
 use actix_web::http::KeepAlive;
-use actix_web::middleware::Logger;
-use actix_web::{web, web::ServiceConfig, App, HttpServer, Responder};
-use common::packets::c2s::{AskForPersonProfil, DeleteNickname, VoteNickname};
+use actix_web::{web, web::ServiceConfig, App, Either, HttpMessage, HttpRequest, HttpResponse, HttpServer, Responder};
+use common::packets::c2s::{AskForPersonProfil, DeleteNickname, Login, VoteNickname};
 use common::ProfilID;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::Duration;
+use actix_identity::IdentityMiddleware;
+use actix_session::SessionMiddleware;
+use actix_session::storage::CookieSessionStore;
+use actix_web::cookie::Key;
 use tracing::info;
 
 extern crate tracing;
 
-type State = Arc<Mutex<AppState>>;
+type State = Mutex<AppState>;
 
 struct AppState {
     data_server: DataServer,
@@ -43,8 +46,7 @@ impl AppState {
             Ok(file) => serde_json::from_reader(file).unwrap(),
             Err(_) => {
                 let template = serialization::PeopleRepartition::template();
-                let file =
-                    File::create("classes.json").expect("Failed to create a template file");
+                let file = File::create("classes.json").expect("Failed to create a template file");
                 serde_json::to_writer_pretty(file, &template).unwrap();
                 template
             }
@@ -52,7 +54,7 @@ impl AppState {
     }
 
     fn load_old_nicknames(data_server: &mut DataServer) {
-        let files = std::fs::read_dir("./classes").expect("Failed to read dir");
+        let files = fs::read_dir("./classes").expect("Failed to read dir");
         for file in files.flatten() {
             let path = file.path();
             if path.is_file() && path.extension() == Some("json".as_ref()) {
@@ -101,6 +103,30 @@ impl AppState {
     }
 }
 
+fn get_id(data_server: &DataServer, user: Option<actix_identity::Identity>) -> Option<ProfilID> {
+    let name = user?.id().ok()?;
+    data_server.get_profil_id(&name)
+}
+
+
+#[actix_web::post("/login")]
+async fn login(login: web::Json<Login>, req: HttpRequest, state: web::Data<State>) -> impl Responder {
+    if state.lock().unwrap().data_server.log(&login.identity) {
+        actix_identity::Identity::login(&req.extensions(), login.identity.name.clone()).unwrap();
+        HttpResponse::Ok()
+    } else {
+        HttpResponse::Unauthorized()
+    }
+}
+
+#[actix_web::post("/logout")]
+async fn logout(user: Option<actix_identity::Identity>) -> impl Responder {
+    if let Some(user) = user {
+        user.logout();
+    }
+    HttpResponse::Ok()
+}
+
 #[actix_web::get("/class_list")]
 async fn list_class(state: web::Data<State>) -> impl Responder {
     web::Json(state.lock().unwrap().data_server.class_list())
@@ -110,10 +136,11 @@ async fn list_class(state: web::Data<State>) -> impl Responder {
 async fn person_profile(
     asked: web::Json<AskForPersonProfil>,
     state: web::Data<State>,
+    user: Option<actix_identity::Identity>
 ) -> impl Responder {
-    let AskForPersonProfil { identity, profil } = asked.0;
+    let AskForPersonProfil { profil } = asked.0;
     let server = &state.lock().unwrap().data_server;
-    let id = server.get_profil_id(&identity);
+    let id= get_id(&server, user);
     web::Json(server.personne_profil(id, profil))
 }
 
@@ -121,39 +148,44 @@ async fn person_profile(
 async fn vote_nickname(
     vote_nickname: web::Json<VoteNickname>,
     state: web::Data<State>,
+    user: Option<actix_identity::Identity>
 ) -> impl Responder {
     let VoteNickname {
-        identity,
         target,
         nickname,
     } = vote_nickname.0;
     let server = &mut state.lock().unwrap().data_server;
-    let id = server.get_profil_id(&identity);
+    let id= get_id(&server, user);
     if let Some(id) = id {
-        server.vote(id, target, nickname)
+        server.vote(id, target, nickname);
+        Either::Left(web::Json(server.personne_profil(Some(id), target)))
+    } else {
+        Either::Right(HttpResponse::Unauthorized())
     }
-    web::Json(server.personne_profil(id, target))
 }
 
 #[actix_web::post("/delete_nickname")]
 async fn delete_nickname(
     delete_nickname: web::Json<DeleteNickname>,
     state: web::Data<State>,
+    user: Option<actix_identity::Identity>
 ) -> impl Responder {
     let DeleteNickname {
-        identity,
         target,
         nickname,
     } = delete_nickname.0;
     let server = &mut state.lock().unwrap().data_server;
-    let id = server.get_profil_id(&identity);
+    let id= get_id(&server, user);
+
     if let Some(id) = id {
-        server.delete(id, target, nickname)
+        server.delete(id, target, nickname);
+        Either::Left(web::Json(server.personne_profil(Some(id), target)))
+    } else {
+        Either::Right(HttpResponse::Unauthorized())
     }
-    web::Json(server.personne_profil(id, target))
 }
 
-async fn save_loop(state: Arc<Mutex<AppState>>) {
+async fn save_loop(state: web::Data<Mutex<AppState>>) {
     let mut interval = actix_web::rt::time::interval(Duration::from_secs(60));
     loop {
         interval.tick().await;
@@ -166,22 +198,25 @@ async fn save_loop(state: Arc<Mutex<AppState>>) {
 async fn main() -> std::io::Result<()> {
     // install global subscriber configured based on RUST_LOG envvar.
     tracing_subscriber::fmt().init();
+    let secret_key = Key::from("LesChaussettes de l'archiduchesse sont elles seches ? archi-seche !".as_bytes());
 
     info!("Starting server");
 
-    let state = Arc::new(AppState::new());
+    let state = web::Data::new(AppState::new());
 
     let future = save_loop(state.clone());
 
-    actix_web::rt::spawn(future);
     let cloned = state.clone();
+    actix_web::rt::spawn(future);
 
     let e = HttpServer::new(move || {
         let cors = Cors::permissive();
 
         App::new()
-            .app_data(web::Data::new(state.clone()))
-            .wrap(Logger::default())
+            .app_data(web::Data::clone(&state))
+            .wrap(IdentityMiddleware::default())
+            .wrap(SessionMiddleware::new(CookieSessionStore::default(), secret_key.clone()))
+            //.wrap(Logger::default())
             .wrap(cors)
             .configure(routes)
             .service(Files::new("assets", "client/dist/assets").show_files_listing())
@@ -199,6 +234,8 @@ async fn main() -> std::io::Result<()> {
 }
 
 fn routes(cfg: &mut ServiceConfig) {
+    cfg.service(login);
+    cfg.service(logout);
     cfg.service(list_class);
     cfg.service(person_profile);
     cfg.service(delete_nickname);

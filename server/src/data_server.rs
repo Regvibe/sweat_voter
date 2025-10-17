@@ -34,9 +34,11 @@ pub struct NickNameProposition {
 
 /// Global storage of most of the server content
 pub struct DataServer {
-    id_to_profil: HashMap<ProfilID, Profil>,
-    name_to_id: HashMap<String, ProfilID>,
-    classes: HashMap<ClassID, Class>,
+    id_to_profil: MutationTracker<HashMap<ProfilID, Profil>>,
+    free_profil_id_beginning: u32,
+    name_to_id: MutationTracker<HashMap<String, ProfilID>>,
+    classes: MutationTracker<HashMap<ClassID, Class>>,
+    free_class_id_beginning: u32,
     nick_name_proposition: MutationTracker<HashMap<ProfilID, Vec<NickNameProposition>>>,
 }
 
@@ -81,7 +83,7 @@ impl DataServer {
         );
 
         let id_to_profil = HashMap::from_iter(profil_iter);
-        let identity_to_id = HashMap::from_iter(
+        let name_to_id = HashMap::from_iter(
             id_to_profil
                 .iter()
                 .map(|(id, profil)| (profil.identity.name.clone(), *id)),
@@ -123,9 +125,11 @@ impl DataServer {
         let classes = HashMap::from_iter(class_iter);
 
         Self {
-            id_to_profil,
-            name_to_id: identity_to_id,
-            classes,
+            id_to_profil: MutationTracker::new(id_to_profil),
+            free_profil_id_beginning: last_profil_id_used,
+            name_to_id: MutationTracker::new(name_to_id),
+            classes: MutationTracker::new(classes),
+            free_class_id_beginning: last_class_id_used,
             nick_name_proposition: Default::default(),
         }
     }
@@ -146,6 +150,45 @@ impl DataServer {
             profil_mapping,
             class_mapping,
         }
+    }
+
+    pub fn add_profile(&mut self) {
+        todo!()
+    }
+
+    pub fn build_people_repartition(&mut self) -> Option<serialization::PeopleRepartition> {
+        if !self.id_to_profil.clear_dirty() {
+            return None;
+        };
+        let mut profiles: Vec<_> = self
+            .id_to_profil
+            .values()
+            .map(|profil| serialization::Profil {
+                identity: profil.identity.clone(),
+                permissions: profil.permissions,
+            })
+            .collect();
+
+        profiles.sort_by(|a, b| a.identity.name.cmp(&b.identity.name));
+
+        let classes: Vec<_> = self
+            .classes
+            .values()
+            .map(|class| serialization::Class {
+                name: class.name.clone(),
+                people: class
+                    .profiles
+                    .iter()
+                    .flat_map(|id| {
+                        self.id_to_profil
+                            .get(id)
+                            .map(|profil| profil.identity.name.clone())
+                    })
+                    .collect(),
+            })
+            .collect();
+
+        Some(serialization::PeopleRepartition { profiles, classes })
     }
 
     pub fn load_proposition(
@@ -286,14 +329,18 @@ impl DataServer {
         }
     }
 
-    pub fn get_profil_id(&self, identity: &Identity) -> Option<ProfilID> {
+    /// Return if a user can log
+    pub fn log(&self, identity: &Identity) -> bool {
         let Identity { name, password } = identity;
-
-        self.name_to_id.get(name).cloned().filter(|id| {
+        self.name_to_id.get(name).is_some_and(|id| {
             self.id_to_profil
                 .get(id)
                 .is_some_and(|profil| profil.identity.password == *password)
         })
+    }
+
+    pub fn get_profil_id(&self, name: &String) -> Option<ProfilID> {
+        self.name_to_id.get(name).cloned()
     }
 
     //------------ Network related functions ------------

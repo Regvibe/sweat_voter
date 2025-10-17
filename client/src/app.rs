@@ -1,8 +1,9 @@
 use crate::class_selector::ClassSelector;
-use crate::editor_selector::EditorSelector;
-use crate::person_selector::{Action, PersonSelector};
-use common::packets::c2s::{AskForPersonProfil, DeleteNickname, VoteNickname};
+use crate::login_selector::{EditorSelector, LoginAction};
+use crate::person_selector::{PersonSelector, ProfilAction};
+use common::packets::c2s::{AskForPersonProfil, DeleteNickname, Login, VoteNickname};
 use common::packets::s2c::{ClassList, Profile};
+use common::Identity;
 use eframe::App;
 use egui::TextBuffer;
 use log::warn;
@@ -12,6 +13,7 @@ use std::sync::mpsc::{Receiver, Sender};
 enum IncomingPacket {
     ClassList(ClassList),
     PersonProfileResponse(Profile),
+    LoginUpdate { logged: bool },
 }
 
 pub struct HttpApp {
@@ -28,32 +30,35 @@ impl HttpApp {
     const ROOT: &'static str = "https://sweat.corneille-rouen.xyz/";
     #[cfg(target_arch = "wasm32")]
     const ROOT: &'static str = "";
+    const UNAUTHORIZED: u16 = 401;
 
     fn fetch<T>(&self, request: ehttp::Request, deserializer: T)
     where
-        T: Send + 'static + FnOnce(String) -> Option<IncomingPacket>,
+        T: Send + 'static + FnOnce(ehttp::Response) -> Option<IncomingPacket>,
     {
         let new_sender = self.sender.clone();
         let ctx = self.ctx.clone();
 
         ehttp::fetch(request, move |response| {
-            let response = response.map(|result| String::from_utf8(result.bytes));
-            match response {
+            let response = match response {
+                Ok(response) => response,
                 Err(e) => {
                     warn!("Failed to fetch: {}", e);
                     return;
                 }
-                Ok(Err(e)) => {
-                    warn!("Failed to fetch: {}", e);
-                    return;
-                }
-                Ok(Ok(response)) => {
-                    let packet = deserializer(response);
-                    if let Some(packet) = packet {
-                        let _ = new_sender.send(packet).expect("Failed to send packet");
-                        ctx.request_repaint();
-                    }
-                }
+            };
+
+            if response.status == Self::UNAUTHORIZED {
+                let _ = new_sender
+                    .send(IncomingPacket::LoginUpdate { logged: false })
+                    .expect("Failed to channel packet");
+                ctx.request_repaint();
+                return;
+            }
+
+            if let Some(packet) = deserializer(response) {
+                let _ = new_sender.send(packet).expect("Failed to channel packet");
+                ctx.request_repaint();
             }
         });
     }
@@ -61,19 +66,31 @@ impl HttpApp {
     fn request_class_list(&mut self) {
         let request = ehttp::Request::get(format!("{}class_list", Self::ROOT));
         self.fetch(request, |response| {
-            let class_list: ClassList =
-                serde_json::from_str(&response).expect("Failed to parse class list");
-            Some(IncomingPacket::ClassList(class_list))
+            Some(IncomingPacket::ClassList(response.json().ok()?))
         });
     }
 
-    const PROFILE_RESPONSE_HANDLER: fn(String) -> Option<IncomingPacket> = |response| {
-        let person_profile_response: Profile =
-            serde_json::from_str(&response).expect("Failed to parse person profile response");
-        Some(IncomingPacket::PersonProfileResponse(
-            person_profile_response,
-        ))
-    };
+    const PROFILE_RESPONSE_HANDLER: fn(ehttp::Response) -> Option<IncomingPacket> =
+        |response| Some(IncomingPacket::PersonProfileResponse(response.json().ok()?));
+
+    fn login(&mut self, identity: Identity) {
+        let request = ehttp::Request::json(format!("{}login", Self::ROOT), &Login { identity })
+            .expect("Failed to create request");
+        self.fetch(request, |response| {
+            Some(IncomingPacket::LoginUpdate {
+                logged: response.ok,
+            })
+        });
+    }
+
+    fn logout(&mut self) {
+        let request = ehttp::Request::post(format!("{}logout", Self::ROOT), vec![]);
+        self.fetch(request, |response| {
+            response
+                .ok
+                .then_some(IncomingPacket::LoginUpdate { logged: false })
+        })
+    }
 
     fn request_person_profile(&mut self, ask_for_person_profile: AskForPersonProfil) {
         let request = ehttp::Request::json(
@@ -98,11 +115,11 @@ impl HttpApp {
     }
 
     fn check_incoming(&mut self) {
+        let mut should_update_viewed_profil = false;
         for message in self.incoming_message.try_iter() {
             match message {
                 IncomingPacket::ClassList(class_list) => {
                     let ClassList { mut classes } = class_list;
-
                     self.class_selector.set_classes(
                         classes
                             .iter_mut()
@@ -118,7 +135,18 @@ impl HttpApp {
                 IncomingPacket::PersonProfileResponse(person_profile_response) => {
                     self.person_selector.set_profil(person_profile_response)
                 }
+                IncomingPacket::LoginUpdate { logged } => {
+                    should_update_viewed_profil = true;
+                    self.editor_selector.set_logged(logged)
+                }
             }
+        }
+        if let Some(profil) = self
+            .person_selector
+            .get_selected_profil()
+            .filter(|_| should_update_viewed_profil)
+        {
+            self.request_person_profile(AskForPersonProfil { profil })
         }
     }
 
@@ -136,6 +164,9 @@ impl HttpApp {
             ctx,
         };
         this.request_class_list();
+        if !this.editor_selector.is_empty() {
+            this.login(this.editor_selector.get_identity())
+        }
         this
     }
 }
@@ -150,23 +181,20 @@ impl App for HttpApp {
                 ui.add_space(200.0); // Jasmine I'm going to kill you
                                      // ugliest way to leave free space to vote
 
-                let _class_updated = self.class_selector.update(ui);
-                let editor_updated = self.editor_selector.update(ui);
+                let action = self.editor_selector.update(ui);
 
-                if let (Some(storage), true) = (frame.storage_mut(), editor_updated) {
-                    self.editor_selector.save(storage);
+                match action {
+                    LoginAction::Login => {
+                        self.login(self.editor_selector.get_identity());
+                        if let Some(storage) = frame.storage_mut() {
+                            self.editor_selector.save(storage)
+                        }
+                    }
+                    LoginAction::Logout => self.logout(),
+                    _ => (),
                 }
 
-                /*if class_updated || editor_updated {
-                    if let Some(selected) = self.class_selector.get_selected() {
-                        self.request_person_profile(AskForPersonProfile {
-                            class: selected.to_string(),
-                            editor: self.editor_selector.get_name().to_string(),
-                            password: self.editor_selector.get_password().to_string(),
-                            kind: RequestKind::All,
-                        })
-                    }
-                }*/
+                self.class_selector.update(ui);
             });
 
             let Some(selected_class) = self.class_selector.get_selected() else {
@@ -178,18 +206,13 @@ impl App for HttpApp {
                 .person_selector
                 .display_name_selector(ui, selected_class);
             if let Some(profil) = requested_profiles {
-                self.request_person_profile(AskForPersonProfil {
-                    identity: self.editor_selector.get_identity(),
-                    profil,
-                })
+                self.request_person_profile(AskForPersonProfil { profil })
             }
 
-            let action = self
-                .person_selector
-                .update_nickname_selector(ui, self.editor_selector.get_identity());
+            let action = self.person_selector.update_nickname_selector(ui);
             match action {
-                Action::Delete(delete_nickname) => self.delete_nickname(delete_nickname),
-                Action::Vote(vote_nickname) => self.vote_nickname(vote_nickname),
+                ProfilAction::Delete(delete_nickname) => self.delete_nickname(delete_nickname),
+                ProfilAction::Vote(vote_nickname) => self.vote_nickname(vote_nickname),
                 _ => {}
             }
         });
