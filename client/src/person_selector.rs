@@ -1,8 +1,8 @@
 use common::packets::c2s::{DeleteNickname, VoteNickname};
 use common::packets::s2c;
 use common::packets::s2c::NicknameStatut;
-use common::{ClassID, Identity, ProfilID};
-use egui::RichText;
+use common::{ClassID, ProfilID};
+use egui::{RichText, TextBuffer};
 use std::collections::HashMap;
 
 struct Profile {
@@ -21,7 +21,7 @@ pub struct PersonSelector {
     new_nickname: String,
 }
 
-pub enum Action {
+pub enum ProfilAction {
     Vote(VoteNickname),
     Delete(DeleteNickname),
     None,
@@ -35,6 +35,10 @@ impl PersonSelector {
             selected_profil: None,
             new_nickname: String::new(),
         }
+    }
+
+    pub fn get_selected_profil(&self) -> Option<ProfilID> {
+        self.selected_profil
     }
 
     pub fn set_classes<T: Iterator<Item = (ClassID, Vec<(ProfilID, String)>)>>(&mut self, iter: T) {
@@ -54,7 +58,9 @@ impl PersonSelector {
         } = profil;
 
         //always sort by the most voted !
-        nicknames.sort_by(|a, b| b.count.cmp(&a.count));
+        nicknames.sort_by(|a, b| {
+            usize::cmp(&b.count, &a.count).then(String::cmp(&a.proposition, &b.proposition))
+        });
 
         self.profiles.insert(
             profil_id,
@@ -95,8 +101,8 @@ impl PersonSelector {
         requested_profil
     }
 
-    pub fn update_nickname_selector(&mut self, ui: &mut egui::Ui, identity: Identity) -> Action {
-        let mut action = Action::None;
+    pub fn update_nickname_selector(&mut self, ui: &mut egui::Ui) -> ProfilAction {
+        let mut action = ProfilAction::None;
         let Some(id) = self.selected_profil else {
             return action;
         };
@@ -129,16 +135,14 @@ impl PersonSelector {
 
                     if profil.allowed_to_vote && ui.button("Voter").clicked() {
                         //lazy evaluation hide the button if your not in the list
-                        action = Action::Vote(VoteNickname {
-                            identity: identity.clone(),
+                        action = ProfilAction::Vote(VoteNickname {
                             nickname: proposition.clone(),
                             target: id,
                         });
                     }
 
                     if *allowed_to_be_delete && ui.button("Supprimer").clicked() {
-                        action = Action::Delete(DeleteNickname {
-                            identity: identity.clone(),
+                        action = ProfilAction::Delete(DeleteNickname {
                             nickname: proposition.clone(),
                             target: id,
                         });
@@ -148,18 +152,19 @@ impl PersonSelector {
             });
 
             if profil.allowed_to_vote {
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.new_nickname)
-                        .hint_text("nouveau surnom")
-                        .char_limit(30),
-                );
-                if ui.button("Proposer").clicked() {
-                    action = Action::Vote(VoteNickname {
-                        identity: identity.clone(),
-                        nickname: self.new_nickname.clone(),
+                let pressed_enter = ui
+                    .add(
+                        egui::TextEdit::singleline(&mut self.new_nickname)
+                            .hint_text("nouveau surnom")
+                            .char_limit(30),
+                    )
+                    .lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if ui.button("Proposer").clicked() || pressed_enter {
+                    action = ProfilAction::Vote(VoteNickname {
+                        nickname: self.new_nickname.take(),
                         target: id,
                     });
-                    self.new_nickname.clear();
                 }
             }
         });

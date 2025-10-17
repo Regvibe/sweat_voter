@@ -2,24 +2,26 @@ pub mod c2s {
     use crate::{Identity, ProfilID};
     use serde::{Deserialize, Serialize};
 
+    #[derive(Deserialize, Serialize, Debug, Clone)]
+    pub struct Login {
+        pub identity: Identity
+    }
+
     /// Voting and adding a nickname is the same operation
     #[derive(Deserialize, Serialize, Debug, Clone)]
     pub struct VoteNickname {
-        pub identity: Identity, // TODO: this could be enhanced with some kind of connection token
         pub target: ProfilID,
         pub nickname: String, // which nickname to vote for
     }
 
     #[derive(Deserialize, Serialize, Debug, Clone)]
     pub struct DeleteNickname {
-        pub identity: Identity,
         pub target: ProfilID, // the owner of the nickname
         pub nickname: String, // which nickname to delete
     }
 
     #[derive(Deserialize, Serialize, Debug, Clone)]
     pub struct AskForPersonProfil {
-        pub identity: Identity,
         pub profil: ProfilID,
     }
 }
