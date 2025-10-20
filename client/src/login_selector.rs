@@ -72,7 +72,7 @@ impl EditorSelector {
             )
             .lost_focus();
 
-        ui.button("connection").clicked()
+        ui.button("connexion").clicked()
             || (name_response || password_response)
                 && !self.name.is_empty()
                 && !self.password.is_empty()

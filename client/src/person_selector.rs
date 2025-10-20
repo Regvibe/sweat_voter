@@ -1,4 +1,4 @@
-use common::packets::c2s::{DeleteNickname, VoteNickname};
+use common::packets::c2s::{DeleteNickname, UpdateNicknameProtection, VoteNickname};
 use common::packets::s2c;
 use common::packets::s2c::NicknameStatut;
 use common::{ClassID, ProfilID};
@@ -7,6 +7,7 @@ use std::collections::HashMap;
 
 struct Profile {
     allowed_to_vote: bool,
+    allowed_to_protect: bool,
     nicknames: Vec<NicknameStatut>,
 }
 
@@ -24,6 +25,7 @@ pub struct PersonSelector {
 pub enum ProfilAction {
     Vote(VoteNickname),
     Delete(DeleteNickname),
+    UpdateProtection(UpdateNicknameProtection),
     None,
 }
 
@@ -55,6 +57,7 @@ impl PersonSelector {
             profil_id,
             mut nicknames,
             allowed_to_vote,
+            allowed_to_protect,
         } = profil;
 
         //always sort by the most voted !
@@ -66,6 +69,7 @@ impl PersonSelector {
             profil_id,
             Profile {
                 allowed_to_vote,
+                allowed_to_protect,
                 nicknames,
             },
         );
@@ -121,6 +125,7 @@ impl PersonSelector {
                     count,
                     contain_you,
                     allowed_to_be_delete,
+                    protected,
                 } in profil.nicknames.iter()
                 {
                     ui.label(proposition);
@@ -147,10 +152,25 @@ impl PersonSelector {
                             target: id,
                         });
                     }
+
+                    if profil.allowed_to_protect {
+                        let result = if *protected {
+                            ui.button("déverrouiller")
+                        } else {
+                            ui.button("verrouiller")
+                        };
+                        if result.clicked() {
+                            action = ProfilAction::UpdateProtection(UpdateNicknameProtection {
+                                target: id,
+                                nickname: proposition.clone(),
+                                protection_statut: !protected,
+                            })
+                        }
+                    }
+
                     ui.end_row();
                 }
             });
-
             if profil.allowed_to_vote {
                 let pressed_enter = ui
                     .add(

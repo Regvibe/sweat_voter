@@ -329,6 +329,31 @@ impl DataServer {
         }
     }
 
+    /// Attempt to protect a nickname proposition
+    pub fn update_nickname_protection(
+        &mut self,
+        admin: ProfilID,
+        target: ProfilID,
+        nickname: String,
+        new_statut: bool,
+    ) {
+        let Some(permissions) = self.get_permission(admin) else {
+            return;
+        };
+
+        if !self.is_action_allowed_between(permissions.protect_nickname, admin, target) {
+            return;
+        }
+
+        let Some(nicknames) = self.nick_name_proposition.get_mut(&target) else {
+            return;
+        };
+        let Some(i) = nicknames.iter().position(|n| *n.proposition == nickname) else {
+            return;
+        };
+        nicknames[i].protected = new_statut;
+    }
+
     /// Return if a user can log
     pub fn log(&self, identity: &Identity) -> bool {
         let Identity { name, password } = identity;
@@ -394,7 +419,7 @@ impl DataServer {
         requester: Option<ProfilID>,
         asked_profil: ProfilID,
     ) -> s2c::Profile {
-        let (allowed_to_vote, allowed_to_delete, can_protect) = requester
+        let (allowed_to_vote, allowed_to_delete, allowed_to_protect) = requester
             .map(|r| self.get_permission_on_profil(r, asked_profil))
             .unwrap_or((false, false, false));
 
@@ -410,7 +435,8 @@ impl DataServer {
                         .is_some_and(|requester| proposition.votes.contains(&requester)),
                     allowed_to_be_delete: (allowed_to_delete
                         || requester.is_some_and(|r| r == proposition.author))
-                        && (!proposition.protected || can_protect),
+                        && (!proposition.protected || allowed_to_protect),
+                    protected: proposition.protected,
                 })
                 .collect(),
         };
@@ -419,6 +445,7 @@ impl DataServer {
             profil_id: asked_profil,
             nicknames,
             allowed_to_vote,
+            allowed_to_protect,
         }
     }
 }

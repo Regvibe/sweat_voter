@@ -1,7 +1,9 @@
 use crate::class_selector::ClassSelector;
 use crate::login_selector::{EditorSelector, LoginAction};
 use crate::person_selector::{PersonSelector, ProfilAction};
-use common::packets::c2s::{AskForPersonProfil, DeleteNickname, Login, VoteNickname};
+use common::packets::c2s::{
+    AskForPersonProfil, DeleteNickname, Login, UpdateNicknameProtection, VoteNickname,
+};
 use common::packets::s2c::{ClassList, Profile};
 use common::Identity;
 use eframe::App;
@@ -101,6 +103,12 @@ impl HttpApp {
         self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
     }
 
+    fn vote_nickname(&mut self, vote_nickname: VoteNickname) {
+        let request = ehttp::Request::json(format!("{}vote_nickname", Self::ROOT), &vote_nickname)
+            .expect("Failed to create request");
+        self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
+    }
+
     fn delete_nickname(&mut self, delete_nickname: DeleteNickname) {
         let request =
             ehttp::Request::json(format!("{}delete_nickname", Self::ROOT), &delete_nickname)
@@ -108,9 +116,12 @@ impl HttpApp {
         self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
     }
 
-    fn vote_nickname(&mut self, vote_nickname: VoteNickname) {
-        let request = ehttp::Request::json(format!("{}vote_nickname", Self::ROOT), &vote_nickname)
-            .expect("Failed to create request");
+    fn update_nickname_protection(&mut self, update_nickname_protection: UpdateNicknameProtection) {
+        let request = ehttp::Request::json(
+            format!("{}update_nickname_protection", Self::ROOT),
+            &update_nickname_protection,
+        )
+        .expect("Failed to create request");
         self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
     }
 
@@ -213,6 +224,7 @@ impl App for HttpApp {
             match action {
                 ProfilAction::Delete(delete_nickname) => self.delete_nickname(delete_nickname),
                 ProfilAction::Vote(vote_nickname) => self.vote_nickname(vote_nickname),
+                ProfilAction::UpdateProtection(update) => self.update_nickname_protection(update),
                 _ => {}
             }
         });

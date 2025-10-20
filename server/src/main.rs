@@ -1,21 +1,31 @@
+mod commands;
 mod data_server;
 
+use crate::commands::AddProfil;
 use crate::data_server::{compat, serialization, DataServer, NickNameProposition};
 use actix_cors::Cors;
 use actix_files::Files;
+use actix_identity::IdentityMiddleware;
+use actix_session::storage::CookieSessionStore;
+use actix_session::SessionMiddleware;
+use actix_web::cookie::Key;
 use actix_web::http::KeepAlive;
-use actix_web::{web, web::ServiceConfig, App, Either, HttpMessage, HttpRequest, HttpResponse, HttpServer, Responder};
-use common::packets::c2s::{AskForPersonProfil, DeleteNickname, Login, VoteNickname};
+use actix_web::{
+    web, web::ServiceConfig, App, Either, HttpMessage, HttpRequest, HttpResponse, HttpServer,
+    Responder,
+};
+use common::packets::c2s::{
+    AskForPersonProfil, DeleteNickname, Login, UpdateNicknameProtection, VoteNickname,
+};
 use common::ProfilID;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
+use std::io::stdin;
 use std::sync::Mutex;
-use std::time::Duration;
-use actix_identity::IdentityMiddleware;
-use actix_session::SessionMiddleware;
-use actix_session::storage::CookieSessionStore;
-use actix_web::cookie::Key;
+use structopt::clap::{AppSettings, Error};
+use structopt::StructOpt;
+use tokio::task::spawn_blocking;
 use tracing::info;
 
 extern crate tracing;
@@ -108,9 +118,12 @@ fn get_id(data_server: &DataServer, user: Option<actix_identity::Identity>) -> O
     data_server.get_profil_id(&name)
 }
 
-
 #[actix_web::post("/login")]
-async fn login(login: web::Json<Login>, req: HttpRequest, state: web::Data<State>) -> impl Responder {
+async fn login(
+    login: web::Json<Login>,
+    req: HttpRequest,
+    state: web::Data<State>,
+) -> impl Responder {
     if state.lock().unwrap().data_server.log(&login.identity) {
         actix_identity::Identity::login(&req.extensions(), login.identity.name.clone()).unwrap();
         HttpResponse::Ok()
@@ -136,11 +149,11 @@ async fn list_class(state: web::Data<State>) -> impl Responder {
 async fn person_profile(
     asked: web::Json<AskForPersonProfil>,
     state: web::Data<State>,
-    user: Option<actix_identity::Identity>
+    user: Option<actix_identity::Identity>,
 ) -> impl Responder {
     let AskForPersonProfil { profil } = asked.0;
     let server = &state.lock().unwrap().data_server;
-    let id= get_id(&server, user);
+    let id = get_id(&server, user);
     web::Json(server.personne_profil(id, profil))
 }
 
@@ -148,14 +161,11 @@ async fn person_profile(
 async fn vote_nickname(
     vote_nickname: web::Json<VoteNickname>,
     state: web::Data<State>,
-    user: Option<actix_identity::Identity>
+    user: Option<actix_identity::Identity>,
 ) -> impl Responder {
-    let VoteNickname {
-        target,
-        nickname,
-    } = vote_nickname.0;
+    let VoteNickname { target, nickname } = vote_nickname.0;
     let server = &mut state.lock().unwrap().data_server;
-    let id= get_id(&server, user);
+    let id = get_id(&server, user);
     if let Some(id) = id {
         server.vote(id, target, nickname);
         Either::Left(web::Json(server.personne_profil(Some(id), target)))
@@ -168,14 +178,11 @@ async fn vote_nickname(
 async fn delete_nickname(
     delete_nickname: web::Json<DeleteNickname>,
     state: web::Data<State>,
-    user: Option<actix_identity::Identity>
+    user: Option<actix_identity::Identity>,
 ) -> impl Responder {
-    let DeleteNickname {
-        target,
-        nickname,
-    } = delete_nickname.0;
+    let DeleteNickname { target, nickname } = delete_nickname.0;
     let server = &mut state.lock().unwrap().data_server;
-    let id= get_id(&server, user);
+    let id = get_id(&server, user);
 
     if let Some(id) = id {
         server.delete(id, target, nickname);
@@ -185,8 +192,30 @@ async fn delete_nickname(
     }
 }
 
+#[actix_web::post("/update_nickname_protection")]
+async fn update_protection_nickname(
+    nickname_protection_update: web::Json<UpdateNicknameProtection>,
+    state: web::Data<State>,
+    user: Option<actix_identity::Identity>,
+) -> impl Responder {
+    let UpdateNicknameProtection {
+        target,
+        nickname,
+        protection_statut,
+    } = nickname_protection_update.0;
+    let server = &mut state.lock().unwrap().data_server;
+    let id = get_id(&server, user);
+
+    if let Some(id) = id {
+        server.update_nickname_protection(id, target, nickname, protection_statut);
+        Either::Left(web::Json(server.personne_profil(Some(id), target)))
+    } else {
+        Either::Right(HttpResponse::Unauthorized())
+    }
+}
+
 async fn save_loop(state: web::Data<Mutex<AppState>>) {
-    let mut interval = actix_web::rt::time::interval(Duration::from_secs(60));
+    let mut interval = actix_web::rt::time::interval(std::time::Duration::from_secs(60));
     loop {
         interval.tick().await;
         let mut state = state.lock().unwrap();
@@ -194,20 +223,58 @@ async fn save_loop(state: web::Data<Mutex<AppState>>) {
     }
 }
 
+#[derive(StructOpt)]
+enum Commands {
+    Exit,
+    AddProfil(AddProfil),
+}
+
+fn wait_for_cmd_input() {
+    let mut command = String::new();
+    loop {
+        command.clear();
+        match stdin().read_line(&mut command) {
+            Ok(_) => {
+                let iter = command.trim().split_ascii_whitespace();
+
+                let clap = Commands::clap().setting(AppSettings::NoBinaryName);
+                let command = clap.get_matches_from_safe(iter);
+                let command = match command {
+                    Ok(command) => command,
+                    Err(e) => {
+                        println!("{}", e);
+                        continue;
+                    }
+                };
+
+                match Commands::from_clap(&command) {
+                    Commands::Exit => return,
+                    Commands::AddProfil(add) => {
+                        println!("{:?}", add)
+                    }
+                }
+            }
+            Err(e) => println!("{}", e),
+        }
+    }
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // install global subscriber configured based on RUST_LOG envvar.
     tracing_subscriber::fmt().init();
-    let secret_key = Key::from("LesChaussettes de l'archiduchesse sont elles seches ? archi-seche !".as_bytes());
+    let secret_key = Key::generate();
 
     info!("Starting server");
 
     let state = web::Data::new(AppState::new());
 
-    let future = save_loop(state.clone());
-
     let cloned = state.clone();
-    actix_web::rt::spawn(future);
+    tokio::spawn(save_loop(state.clone()));
+
+    let signal = async || {
+        spawn_blocking(wait_for_cmd_input).await.unwrap();
+    };
 
     let e = HttpServer::new(move || {
         let cors = Cors::permissive();
@@ -215,13 +282,17 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::clone(&state))
             .wrap(IdentityMiddleware::default())
-            .wrap(SessionMiddleware::new(CookieSessionStore::default(), secret_key.clone()))
+            .wrap(SessionMiddleware::new(
+                CookieSessionStore::default(),
+                secret_key.clone(),
+            ))
             //.wrap(Logger::default())
             .wrap(cors)
             .configure(routes)
             .service(Files::new("assets", "client/dist/assets").show_files_listing())
             .service(Files::new("", "client/dist/").index_file("index.html"))
     })
+    .shutdown_signal(signal())
     .keep_alive(KeepAlive::Os)
     .bind(("0.0.0.0", 8080))?
     .run()
@@ -240,4 +311,5 @@ fn routes(cfg: &mut ServiceConfig) {
     cfg.service(person_profile);
     cfg.service(delete_nickname);
     cfg.service(vote_nickname);
+    cfg.service(update_protection_nickname);
 }
