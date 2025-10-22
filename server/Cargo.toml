@@ -16,5 +16,8 @@ tracing = { version = "0", features = [
   "max_level_trace",
   "release_max_level_warn",
 ] }
-anyhow = "1.0.93"
-log = "0.4.22"
+actix-identity = "0.9.0"
+actix-session = { version = "0.11.0", features = ["cookie-session"] }
+structopt = "0.3.26"
+tokio = "1.48.0"
+anyhow = "1.0.100"
