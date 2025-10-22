@@ -1,10 +1,15 @@
 use crate::data_server::mutation_tracker::MutationTracker;
 use crate::data_server::permissions::{InteractionPermission, Permissions};
+use crate::data_server::ServerError::{
+    ClassAlreadyExist, ClassDoesntExist, PersonAlreadyExist, PersonDoesntExist,
+};
 use common::packets::s2c;
 use common::{ClassID, Identity, ProfilID};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::collections::{HashMap, HashSet};
+use std::error::Error;
+use std::fmt::{Debug, Display, Formatter};
 use std::hash::RandomState;
 
 pub mod compat;
@@ -16,6 +21,27 @@ pub struct Profil {
     identity: Identity,
     permissions: Permissions,
 }
+
+#[derive(Clone, Debug)]
+pub enum ServerError {
+    PersonDoesntExist,
+    ClassDoesntExist,
+    PersonAlreadyExist,
+    ClassAlreadyExist,
+}
+
+impl Display for ServerError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PersonDoesntExist => f.write_str("This person does not exist"),
+            ClassDoesntExist => f.write_str("This class does not exist"),
+            PersonAlreadyExist => f.write_str("This person already exists"),
+            ClassAlreadyExist => f.write_str("This class already exists"),
+        }
+    }
+}
+
+impl Error for ServerError {}
 
 #[derive(Debug)]
 pub struct Class {
@@ -152,14 +178,7 @@ impl DataServer {
         }
     }
 
-    pub fn add_profile(&mut self) {
-        todo!()
-    }
-
-    pub fn build_people_repartition(&mut self) -> Option<serialization::PeopleRepartition> {
-        if !self.id_to_profil.clear_dirty() {
-            return None;
-        };
+    pub fn build_people_repartition(&self) -> serialization::PeopleRepartition {
         let mut profiles: Vec<_> = self
             .id_to_profil
             .values()
@@ -171,7 +190,7 @@ impl DataServer {
 
         profiles.sort_by(|a, b| a.identity.name.cmp(&b.identity.name));
 
-        let classes: Vec<_> = self
+        let mut classes: Vec<_> = self
             .classes
             .values()
             .map(|class| serialization::Class {
@@ -188,7 +207,9 @@ impl DataServer {
             })
             .collect();
 
-        Some(serialization::PeopleRepartition { profiles, classes })
+        classes.sort_by(|a, b| a.name.cmp(&b.name));
+
+        serialization::PeopleRepartition { profiles, classes }
     }
 
     pub fn load_proposition(
@@ -235,6 +256,164 @@ impl DataServer {
             Some(self.nick_name_proposition.clone())
         } else {
             None
+        }
+    }
+
+    pub fn try_to_save_profils(
+        &mut self,
+    ) -> Option<(serialization::PeopleRepartition, serialization::IdMap)> {
+        if self.id_to_profil.clear_dirty()
+            || self.name_to_id.clear_dirty()
+            || self.classes.clear_dirty()
+        {
+            let repartition = self.build_people_repartition();
+            let id_map = self.build_id_map();
+            Some((repartition, id_map))
+        } else {
+            None
+        }
+    }
+
+    pub fn add_profile(&mut self, name: String, password: String) -> Result<(), ServerError> {
+        let entry = self.name_to_id.entry(name.clone());
+        if let Occupied(_) = entry {
+            return Err(PersonAlreadyExist);
+        }
+
+        self.free_profil_id_beginning += 1;
+        let id = ProfilID(self.free_profil_id_beginning);
+        entry.insert_entry(id);
+        let _ = entry;
+        self.id_to_profil.insert(
+            id,
+            Profil {
+                identity: Identity { name, password },
+                permissions: Default::default(),
+            },
+        );
+        Ok(())
+    }
+
+    pub fn delete_profil(&mut self, profil: String) -> Result<(), ServerError> {
+        let removed = self.name_to_id.remove(&profil).ok_or(PersonDoesntExist)?;
+
+        self.id_to_profil.remove(&removed);
+
+        // small optimisation to reduced unused id overhead
+        if removed.0 == self.free_profil_id_beginning {
+            self.free_profil_id_beginning -= 1;
+        }
+
+        self.nick_name_proposition.remove(&removed);
+        for propositions in self.nick_name_proposition.values_mut() {
+            for proposition in propositions {
+                proposition.votes.retain(|voter| voter != &removed);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn add_class(&mut self, name: String) -> Result<(), ServerError> {
+        let entry = self.classes.values().find(|class| class.name == name);
+
+        if entry.is_some() {
+            return Err(ClassAlreadyExist);
+        }
+
+        self.free_class_id_beginning += 1;
+        let id = ClassID(self.free_profil_id_beginning);
+        self.classes.insert(
+            id,
+            Class {
+                name,
+                profiles: HashSet::new(),
+            },
+        );
+        Ok(())
+    }
+
+    pub fn delete_class(&mut self, name: String) -> Result<(), ServerError> {
+        let id = self
+            .classes
+            .iter()
+            .find_map(|(id, class)| (*class.name == name).then_some(*id))
+            .ok_or(ClassDoesntExist)?;
+        self.classes.remove(&id);
+
+        if id.0 == self.free_class_id_beginning {
+            self.free_class_id_beginning -= 1;
+        }
+        Ok(())
+    }
+
+    pub fn find_people_out_of_any_class(&self) -> Vec<String> {
+        let mut people = vec![];
+        'outer: for (id, profil) in self.id_to_profil.iter() {
+            for class in self.classes.values() {
+                if class.profiles.contains(id) {
+                    continue 'outer;
+                }
+            }
+            people.push(profil.identity.name.clone());
+        }
+        people
+    }
+
+    pub fn get_password(&self, id: ProfilID) -> Result<String, ServerError> {
+        let profil = self.id_to_profil.get(&id).ok_or(PersonDoesntExist)?;
+        Ok(profil.identity.password.clone())
+    }
+
+    pub fn change_password(
+        &mut self,
+        id: ProfilID,
+        new_password: String,
+    ) -> Result<(), ServerError> {
+        let profil = self.id_to_profil.get_mut(&id).ok_or(PersonDoesntExist)?;
+        profil.identity.password = new_password;
+        Ok(())
+    }
+
+    pub fn change_name(&mut self, old_name: String, new_name: String) -> Result<(), ServerError> {
+        let id = self.name_to_id.remove(&old_name).ok_or(PersonDoesntExist)?;
+        self.name_to_id.insert(new_name.clone(), id);
+        let profil = self.id_to_profil.get_mut(&id).ok_or(PersonDoesntExist)?;
+        profil.identity.name = new_name;
+        Ok(())
+    }
+
+    pub fn add_to_class(
+        &mut self,
+        profil_id: ProfilID,
+        class_name: String,
+    ) -> Result<(), ServerError> {
+        let (_, class) = self
+            .classes
+            .iter_mut()
+            .find(|(_, class)| *class.name == class_name)
+            .ok_or(ClassDoesntExist)?;
+        if class.profiles.insert(profil_id) {
+            Ok(())
+        } else {
+            Err(PersonAlreadyExist)
+        }
+    }
+
+    pub fn remove_from_class(
+        &mut self,
+        profil_id: ProfilID,
+        class_name: String,
+    ) -> Result<(), ServerError> {
+        let (_, class) = self
+            .classes
+            .iter_mut()
+            .find(|(_, class)| *class.name == class_name)
+            .ok_or(ClassDoesntExist)?;
+        if class.profiles.remove(&profil_id) {
+            Ok(())
+        } else {
+            Err(PersonDoesntExist)
         }
     }
 
@@ -364,8 +543,8 @@ impl DataServer {
         })
     }
 
-    pub fn get_profil_id(&self, name: &String) -> Option<ProfilID> {
-        self.name_to_id.get(name).cloned()
+    pub fn get_profil_id(&self, name: &String) -> Result<ProfilID, ServerError> {
+        self.name_to_id.get(name).cloned().ok_or(PersonDoesntExist)
     }
 
     //------------ Network related functions ------------

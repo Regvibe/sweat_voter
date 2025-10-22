@@ -1,8 +1,11 @@
 mod commands;
 mod data_server;
 
-use crate::commands::AddProfil;
-use crate::data_server::{compat, serialization, DataServer, NickNameProposition};
+use crate::commands::{
+    AddClass, AddProfil, AddToClass, ChangeName, ChangePassword, DeleteClass, DeleteProfil,
+    RemoveFromClass, ViewPassword,
+};
+use crate::data_server::{compat, serialization, DataServer, NickNameProposition, ServerError};
 use actix_cors::Cors;
 use actix_files::Files;
 use actix_identity::IdentityMiddleware;
@@ -23,7 +26,7 @@ use std::fs;
 use std::fs::File;
 use std::io::stdin;
 use std::sync::Mutex;
-use structopt::clap::{AppSettings, Error};
+use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::task::spawn_blocking;
 use tracing::info;
@@ -41,6 +44,12 @@ impl AppState {
         if let Some(nicknames) = self.data_server.try_to_save_nickname() {
             let file = File::create("nicknames.json").unwrap();
             serde_json::to_writer_pretty(file, &nicknames).unwrap()
+        }
+        if let Some((repartition, id_map)) = self.data_server.try_to_save_profils() {
+            let file = File::create("classes.json").unwrap();
+            serde_json::to_writer_pretty(file, &repartition).unwrap();
+            let file = File::create("id_map.json").unwrap();
+            serde_json::to_writer_pretty(file, &id_map).unwrap();
         }
     }
 
@@ -111,11 +120,69 @@ impl AppState {
 
         Mutex::new(AppState { data_server })
     }
+
+    fn execute_command(&mut self, command: Commands) -> Result<Option<String>, ServerError> {
+        let server = &mut self.data_server;
+        match command {
+            Commands::Exit => unreachable!(),
+            Commands::AddProfil(AddProfil { name, password }) => {
+                server.add_profile(name, password).map(|_| None)
+            }
+            Commands::DeleteProfil(DeleteProfil { name }) => {
+                server.delete_profil(name).map(|_| None)
+            }
+            Commands::AddClass(AddClass { name }) => server.add_class(name).map(|_| None),
+            Commands::DeleteClass(DeleteClass { name }) => server.delete_class(name).map(|_| None),
+            Commands::ViewLonelyPeople => {
+                use std::fmt::Write;
+
+                let peoples = server.find_people_out_of_any_class();
+                let mut output = String::new();
+                if peoples.is_empty() {
+                    writeln!(&mut output, "No people found!").unwrap();
+                } else {
+                }
+                for people in peoples {
+                    writeln!(&mut output, "{}", people).unwrap();
+                }
+                Ok(Some(output))
+            }
+            Commands::ViewPassword(ViewPassword { name }) => {
+                let id = server.get_profil_id(&name)?;
+                let password = server.get_password(id)?;
+                Ok(Some(format!("{} password is {}", name, password)))
+            }
+            Commands::ChangePassword(ChangePassword { name, new_password }) => {
+                let id = server.get_profil_id(&name)?;
+                server.change_password(id, new_password)?;
+                Ok(None)
+            }
+            Commands::ChangeName(ChangeName { name, new_name }) => {
+                server.change_name(name, new_name).map(|_| None)
+            }
+            Commands::AddToClass(AddToClass {
+                profil_name,
+                class_name,
+            }) => {
+                let id = server.get_profil_id(&profil_name)?;
+                server.add_to_class(id, class_name)?;
+                Ok(None)
+            }
+            Commands::RemoveFromClass(RemoveFromClass {
+                profil_name,
+                class_name,
+            }) => {
+                let id = server.get_profil_id(&profil_name)?;
+                server.remove_from_class(id, class_name)?;
+                Ok(None)
+            }
+        }
+    }
 }
 
 fn get_id(data_server: &DataServer, user: Option<actix_identity::Identity>) -> Option<ProfilID> {
     let name = user?.id().ok()?;
-    data_server.get_profil_id(&name)
+    data_server.get_profil_id(&name).ok()
 }
 
 #[actix_web::post("/login")]
@@ -227,33 +294,47 @@ async fn save_loop(state: web::Data<Mutex<AppState>>) {
 enum Commands {
     Exit,
     AddProfil(AddProfil),
+    DeleteProfil(DeleteProfil),
+    AddClass(AddClass),
+    DeleteClass(DeleteClass),
+    ViewLonelyPeople,
+    ViewPassword(ViewPassword),
+    ChangePassword(ChangePassword),
+    ChangeName(ChangeName),
+    AddToClass(AddToClass),
+    RemoveFromClass(RemoveFromClass),
 }
 
-fn wait_for_cmd_input() {
+fn wait_for_cmd_input(server: web::Data<Mutex<AppState>>) {
     let mut command = String::new();
     loop {
+        // read stdin
         command.clear();
-        match stdin().read_line(&mut command) {
-            Ok(_) => {
-                let iter = command.trim().split_ascii_whitespace();
+        if let Err(e) = stdin().read_line(&mut command) {
+            println!("{}", e);
+            continue;
+        }
 
-                let clap = Commands::clap().setting(AppSettings::NoBinaryName);
-                let command = clap.get_matches_from_safe(iter);
-                let command = match command {
-                    Ok(command) => command,
-                    Err(e) => {
-                        println!("{}", e);
-                        continue;
-                    }
-                };
-
-                match Commands::from_clap(&command) {
-                    Commands::Exit => return,
-                    Commands::AddProfil(add) => {
-                        println!("{:?}", add)
-                    }
-                }
+        // parse the command
+        let iter = command.split_ascii_whitespace();
+        let clap = Commands::clap().setting(AppSettings::NoBinaryName);
+        let command = clap.get_matches_from_safe(iter);
+        let command = match command {
+            Ok(command) => Commands::from_clap(&command),
+            Err(e) => {
+                println!("{}", e);
+                continue;
             }
+        };
+
+        if let Commands::Exit = command {
+            return;
+        }
+
+        let result = server.lock().unwrap().execute_command(command);
+        match result {
+            Ok(None) => println!("action performed successfully!"),
+            Ok(Some(result)) => println!("{}", result.trim()),
             Err(e) => println!("{}", e),
         }
     }
@@ -270,10 +351,13 @@ async fn main() -> std::io::Result<()> {
     let state = web::Data::new(AppState::new());
 
     let cloned = state.clone();
+    let cloned2 = state.clone();
     tokio::spawn(save_loop(state.clone()));
 
     let signal = async || {
-        spawn_blocking(wait_for_cmd_input).await.unwrap();
+        spawn_blocking(move || wait_for_cmd_input(cloned))
+            .await
+            .unwrap();
     };
 
     let e = HttpServer::new(move || {
@@ -299,7 +383,7 @@ async fn main() -> std::io::Result<()> {
     .await;
 
     info!("server stopping");
-    cloned.lock().unwrap().save();
+    cloned2.lock().unwrap().save();
     info!("content saved");
     e
 }
