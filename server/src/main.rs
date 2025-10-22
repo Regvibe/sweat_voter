@@ -316,9 +316,13 @@ fn wait_for_cmd_input(server: web::Data<Mutex<AppState>>) {
         }
 
         // parse the command
-        let iter = command.split_ascii_whitespace();
+        let Some(mut inputs) = shlex::split(&command) else {
+            println!("this command could not be parsed, check you quotes");
+            continue;
+        };
+
         let clap = Commands::clap().setting(AppSettings::NoBinaryName);
-        let command = clap.get_matches_from_safe(iter);
+        let command = clap.get_matches_from_safe(inputs.iter().map(|input| input.trim()));
         let command = match command {
             Ok(command) => Commands::from_clap(&command),
             Err(e) => {
