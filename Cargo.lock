@@ -3139,6 +3139,7 @@ dependencies = [
  "common",
  "serde",
  "serde_json",
+ "shlex",
  "structopt",
  "tokio",
  "tracing",
