@@ -3137,6 +3137,7 @@ dependencies = [
  "actix-web",
  "anyhow",
  "common",
+ "derive_more",
  "serde",
  "serde_json",
  "shlex",

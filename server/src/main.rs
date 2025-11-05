@@ -2,8 +2,8 @@ mod commands;
 mod data_server;
 
 use crate::commands::{
-    AddClass, AddProfil, AddToClass, ChangeName, ChangePassword, DeleteClass, DeleteProfil,
-    RemoveFromClass, ViewPassword,
+    AddClass, AddProfil, AddToClass, ChangeName, ChangePassword, ChangePermission, DeleteClass,
+    DeleteProfil, PermissionKind, RemoveFromClass, ViewPassword,
 };
 use crate::data_server::{compat, serialization, DataServer, NickNameProposition, ServerError};
 use actix_cors::Cors;
@@ -176,6 +176,20 @@ impl AppState {
                 server.remove_from_class(id, class_name)?;
                 Ok(None)
             }
+            Commands::ChangePerm(ChangePermission {
+                name,
+                kind,
+                permission,
+            }) => {
+                let id = server.get_profil_id(&name)?;
+                let perm = server.get_permissions_mut(id)?;
+                match kind {
+                    PermissionKind::Vote => perm.vote = permission,
+                    PermissionKind::Delete => perm.delete = permission,
+                    PermissionKind::Protect => perm.protect_nickname = permission,
+                }
+                Ok(None)
+            }
         }
     }
 }
@@ -303,6 +317,7 @@ enum Commands {
     ChangeName(ChangeName),
     AddToClass(AddToClass),
     RemoveFromClass(RemoveFromClass),
+    ChangePerm(ChangePermission),
 }
 
 fn wait_for_cmd_input(server: web::Data<Mutex<AppState>>) {
@@ -316,7 +331,7 @@ fn wait_for_cmd_input(server: web::Data<Mutex<AppState>>) {
         }
 
         // parse the command
-        let Some(mut inputs) = shlex::split(&command) else {
+        let Some(inputs) = shlex::split(&command) else {
             println!("this command could not be parsed, check you quotes");
             continue;
         };
