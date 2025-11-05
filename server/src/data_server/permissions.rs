@@ -1,11 +1,14 @@
 use serde::{Deserialize, Serialize};
+use structopt::clap::arg_enum;
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
-pub enum InteractionPermission {
-    Forbidden,
-    YourSelf,
-    SameClass,
-    AnyBody,
+arg_enum! {
+    #[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
+    pub enum InteractionPermission {
+        Forbidden,
+        YourSelf,
+        SameClass,
+        AnyBody,
+    }
 }
 
 impl InteractionPermission {

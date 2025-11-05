@@ -375,6 +375,13 @@ impl DataServer {
         Ok(())
     }
 
+    pub fn get_permissions_mut(&mut self, id: ProfilID) -> Result<&mut Permissions, ServerError> {
+        self.id_to_profil
+            .get_mut(&id)
+            .map(|v| &mut v.permissions)
+            .ok_or(PersonDoesntExist)
+    }
+
     pub fn change_name(&mut self, old_name: String, new_name: String) -> Result<(), ServerError> {
         let id = self.name_to_id.remove(&old_name).ok_or(PersonDoesntExist)?;
         self.name_to_id.insert(new_name.clone(), id);
