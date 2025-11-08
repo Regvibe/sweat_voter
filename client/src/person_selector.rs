@@ -171,7 +171,10 @@ impl PersonSelector {
                     ui.end_row();
                 }
             });
-            if profil.allowed_to_vote {
+        });
+
+        if profil.allowed_to_vote {
+            ui.horizontal(|ui| {
                 let pressed_enter = ui
                     .add(
                         egui::TextEdit::singleline(&mut self.new_nickname)
@@ -186,8 +189,8 @@ impl PersonSelector {
                         target: id,
                     });
                 }
-            }
-        });
+            });
+        }
         action
     }
 }

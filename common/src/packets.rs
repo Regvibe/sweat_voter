@@ -7,6 +7,11 @@ pub mod c2s {
         pub identity: Identity,
     }
 
+    #[derive(Deserialize, Serialize, Debug, Clone)]
+    pub struct CommandInput {
+        pub text: String,
+    }
+
     /// Voting and adding a nickname is the same operation
     #[derive(Deserialize, Serialize, Debug, Clone)]
     pub struct VoteNickname {
@@ -37,13 +42,20 @@ pub mod s2c {
     use serde::{Deserialize, Serialize};
 
     #[derive(Deserialize, Serialize, Debug, Clone)]
+    pub struct CommandResponse {
+        pub text: String,
+    }
+
+    #[derive(Deserialize, Serialize, Debug, Clone)]
     pub struct Class {
         pub name: String,
         pub profiles: Vec<(ProfilID, String)>,
     }
 
-    #[derive(Deserialize, Serialize, Debug, Clone)]
-    pub struct ClassList {
+    #[derive(Deserialize, Serialize, Debug, Clone, Default)]
+    pub struct LoginResponse {
+        pub logged: bool,
+        pub allowed_to_use_cmd: bool,
         pub classes: Vec<(ClassID, Class)>,
     }
 

@@ -541,13 +541,15 @@ impl DataServer {
     }
 
     /// Return if a user can log
-    pub fn log(&self, identity: &Identity) -> bool {
+    pub fn log(&self, identity: &Identity) -> Option<ProfilID> {
         let Identity { name, password } = identity;
-        self.name_to_id.get(name).is_some_and(|id| {
-            self.id_to_profil
-                .get(id)
-                .is_some_and(|profil| profil.identity.password == *password)
-        })
+        let id = self.name_to_id.get(name)?;
+        let profil = self.id_to_profil.get(id)?;
+        if profil.identity.password == *password {
+            Some(*id)
+        } else {
+            None
+        }
     }
 
     pub fn get_profil_id(&self, name: &String) -> Result<ProfilID, ServerError> {
@@ -557,8 +559,9 @@ impl DataServer {
     //------------ Network related functions ------------
 
     /// build the list of classes
-    pub fn class_list(&self) -> s2c::ClassList {
-        let vec: Vec<_> = self
+    pub fn class_list(&self, profil: Option<ProfilID>) -> s2c::LoginResponse {
+        // this could be stored to avoid rebuild...
+        let classes: Vec<_> = self
             .classes
             .iter()
             .map(|(id, class)| {
@@ -580,7 +583,20 @@ impl DataServer {
                 )
             })
             .collect();
-        s2c::ClassList { classes: vec }
+
+        let allowed_to_use_cmd = match profil {
+            None => false,
+            Some(id) => self
+                .id_to_profil
+                .get(&id)
+                .map(|p| p.permissions.allowed_to_use_cmd)
+                .unwrap_or(false),
+        };
+        s2c::LoginResponse {
+            classes,
+            logged: profil.is_some(),
+            allowed_to_use_cmd,
+        }
     }
 
     /// return if a person can vote, delete and bypass protection, and can delete your proposition on which you are the author

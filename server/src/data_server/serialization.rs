@@ -28,6 +28,7 @@ impl PeopleRepartition {
                 vote: InteractionPermission::AnyBody,
                 delete: InteractionPermission::SameClass,
                 protect_nickname: InteractionPermission::SameClass,
+                allowed_to_use_cmd: true,
             },
         };
         let someone = Profil {

@@ -17,9 +17,7 @@ use actix_web::{
     web, web::ServiceConfig, App, Either, HttpMessage, HttpRequest, HttpResponse, HttpServer,
     Responder,
 };
-use common::packets::c2s::{
-    AskForPersonProfil, DeleteNickname, Login, UpdateNicknameProtection, VoteNickname,
-};
+use common::packets::c2s::{AskForPersonProfil, CommandInput, DeleteNickname, Login, UpdateNicknameProtection, VoteNickname};
 use common::ProfilID;
 use std::collections::HashMap;
 use std::fs;
@@ -30,6 +28,8 @@ use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::task::spawn_blocking;
 use tracing::info;
+use common::packets::s2c::CommandResponse;
+use crate::data_server::permissions::Permissions;
 
 extern crate tracing;
 
@@ -124,7 +124,7 @@ impl AppState {
     fn execute_command(&mut self, command: Commands) -> Result<Option<String>, ServerError> {
         let server = &mut self.data_server;
         match command {
-            Commands::Exit => unreachable!(),
+            Commands::Exit => Ok(Some("You can't shutdown the server from here".to_string())),
             Commands::AddProfil(AddProfil { name, password }) => {
                 server.add_profile(name, password).map(|_| None)
             }
@@ -176,17 +176,14 @@ impl AppState {
                 server.remove_from_class(id, class_name)?;
                 Ok(None)
             }
-            Commands::ChangePerm(ChangePermission {
-                name,
-                kind,
-                permission,
-            }) => {
+            Commands::ChangePerm(ChangePermission { name, kind }) => {
                 let id = server.get_profil_id(&name)?;
                 let perm = server.get_permissions_mut(id)?;
                 match kind {
-                    PermissionKind::Vote => perm.vote = permission,
-                    PermissionKind::Delete => perm.delete = permission,
-                    PermissionKind::Protect => perm.protect_nickname = permission,
+                    PermissionKind::Vote { permission } => perm.vote = permission,
+                    PermissionKind::Delete { permission } => perm.delete = permission,
+                    PermissionKind::Protect { permission } => perm.protect_nickname = permission,
+                    PermissionKind::UseCmd { permission } => perm.allowed_to_use_cmd = permission,
                 }
                 Ok(None)
             }
@@ -205,25 +202,31 @@ async fn login(
     req: HttpRequest,
     state: web::Data<State>,
 ) -> impl Responder {
-    if state.lock().unwrap().data_server.log(&login.identity) {
+    let server = &state.lock().unwrap().data_server;
+    let id = server.log(&login.identity);
+    if id.is_some() {
         actix_identity::Identity::login(&req.extensions(), login.identity.name.clone()).unwrap();
-        HttpResponse::Ok()
-    } else {
-        HttpResponse::Unauthorized()
-    }
+    };
+    web::Json(server.class_list(id))
 }
 
 #[actix_web::post("/logout")]
-async fn logout(user: Option<actix_identity::Identity>) -> impl Responder {
+async fn logout(state: web::Data<State>, user: Option<actix_identity::Identity>) -> impl Responder {
     if let Some(user) = user {
         user.logout();
     }
-    HttpResponse::Ok()
+    let server = &state.lock().unwrap().data_server;
+    web::Json(server.class_list(None))
 }
 
 #[actix_web::get("/class_list")]
-async fn list_class(state: web::Data<State>) -> impl Responder {
-    web::Json(state.lock().unwrap().data_server.class_list())
+async fn list_class(
+    state: web::Data<State>,
+    user: Option<actix_identity::Identity>,
+) -> impl Responder {
+    let server = &state.lock().unwrap().data_server;
+    let id = get_id(&server, user);
+    web::Json(server.class_list(id))
 }
 
 #[actix_web::post("/person_profile")]
@@ -295,6 +298,47 @@ async fn update_protection_nickname(
     }
 }
 
+#[actix_web::post("/cmd_input")]
+async fn cmd_input(
+    cmd: web::Json<CommandInput>,
+    state: web::Data<State>,
+    user: Option<actix_identity::Identity>
+) -> impl Responder {
+    let app = &mut state.lock().unwrap();
+    let Some(id) = get_id(&app.data_server, user) else { return Either::Right(HttpResponse::Unauthorized()); };
+
+    if let Some(Permissions{ allowed_to_use_cmd: false, .. }) = app.data_server.get_permission(id) { return Either::Right(HttpResponse::Unauthorized()); };
+
+    let Some(inputs) = shlex::split(&cmd.text) else {
+        return Either::Left(web::Json(CommandResponse{
+            text: "this command could not be parsed, check your quotes".to_string(),
+        }));
+    };
+
+    let clap = Commands::clap().setting(AppSettings::NoBinaryName);
+    let command = clap.get_matches_from_safe(inputs.iter().map(|input| input.trim()));
+    let command = match command {
+        Ok(command) => Commands::from_clap(&command),
+        Err(e) => {
+            return Either::Left(web::Json(CommandResponse{
+                text: e.to_string(),
+            }));
+        }
+    };
+
+    let result = app.execute_command(command);
+    let text = match result {
+        Ok(None) => "action performed successfully!".to_string(),
+        Ok(Some(result)) => result.trim().to_string(),
+        Err(e) => e.to_string(),
+    };
+
+    Either::Left(web::Json(CommandResponse{
+        text
+    }))
+}
+
+
 async fn save_loop(state: web::Data<Mutex<AppState>>) {
     let mut interval = actix_web::rt::time::interval(std::time::Duration::from_secs(60));
     loop {
@@ -332,7 +376,7 @@ fn wait_for_cmd_input(server: web::Data<Mutex<AppState>>) {
 
         // parse the command
         let Some(inputs) = shlex::split(&command) else {
-            println!("this command could not be parsed, check you quotes");
+            println!("this command could not be parsed, check your quotes");
             continue;
         };
 
@@ -415,4 +459,5 @@ fn routes(cfg: &mut ServiceConfig) {
     cfg.service(delete_nickname);
     cfg.service(vote_nickname);
     cfg.service(update_protection_nickname);
+    cfg.service(cmd_input);
 }

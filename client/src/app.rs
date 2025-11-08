@@ -1,21 +1,22 @@
 use crate::class_selector::ClassSelector;
+use crate::console::{ConsoleBuilder, ConsoleEvent, ConsoleWindow};
 use crate::login_selector::{EditorSelector, LoginAction};
 use crate::person_selector::{PersonSelector, ProfilAction};
 use common::packets::c2s::{
-    AskForPersonProfil, DeleteNickname, Login, UpdateNicknameProtection, VoteNickname,
+    AskForPersonProfil, CommandInput, DeleteNickname, Login, UpdateNicknameProtection, VoteNickname,
 };
-use common::packets::s2c::{ClassList, Profile};
+use common::packets::s2c::{CommandResponse, LoginResponse, Profile};
 use common::Identity;
 use eframe::App;
-use egui::TextBuffer;
+use egui::{InnerResponse, Rect, TextBuffer};
 use log::warn;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
 
 enum IncomingPacket {
-    ClassList(ClassList),
+    ClassList(LoginResponse),
     PersonProfileResponse(Profile),
-    LoginUpdate { logged: bool },
+    CommandResponse(CommandResponse),
 }
 
 pub struct HttpApp {
@@ -24,6 +25,7 @@ pub struct HttpApp {
     editor_selector: EditorSelector,
     class_selector: ClassSelector,
     person_selector: PersonSelector,
+    console: Option<ConsoleWindow>,
     ctx: egui::Context,
 }
 
@@ -50,9 +52,10 @@ impl HttpApp {
                 }
             };
 
+            // in the case of an unauthorized action, we clear everything, and we wait for the user to log...
             if response.status == Self::UNAUTHORIZED {
                 let _ = new_sender
-                    .send(IncomingPacket::LoginUpdate { logged: false })
+                    .send(IncomingPacket::ClassList(LoginResponse::default()))
                     .expect("Failed to channel packet");
                 ctx.request_repaint();
                 return;
@@ -75,23 +78,26 @@ impl HttpApp {
     const PROFILE_RESPONSE_HANDLER: fn(ehttp::Response) -> Option<IncomingPacket> =
         |response| Some(IncomingPacket::PersonProfileResponse(response.json().ok()?));
 
+    const LOGIN_RESPONSE_HANDLER: fn(ehttp::Response) -> Option<IncomingPacket> =
+        |response| Some(IncomingPacket::ClassList(response.json().ok()?));
+
     fn login(&mut self, identity: Identity) {
         let request = ehttp::Request::json(format!("{}login", Self::ROOT), &Login { identity })
             .expect("Failed to create request");
-        self.fetch(request, |response| {
-            Some(IncomingPacket::LoginUpdate {
-                logged: response.ok,
-            })
-        });
+        self.fetch(request, Self::LOGIN_RESPONSE_HANDLER);
     }
 
     fn logout(&mut self) {
         let request = ehttp::Request::post(format!("{}logout", Self::ROOT), vec![]);
+        self.fetch(request, Self::LOGIN_RESPONSE_HANDLER)
+    }
+
+    fn input_cmd(&mut self, input: CommandInput) {
+        let request = ehttp::Request::json(format!("{}cmd_input", Self::ROOT), &input)
+            .expect("failed_to_create_request");
         self.fetch(request, |response| {
-            response
-                .ok
-                .then_some(IncomingPacket::LoginUpdate { logged: false })
-        })
+            Some(IncomingPacket::CommandResponse(response.json().ok()?))
+        });
     }
 
     fn request_person_profile(&mut self, ask_for_person_profile: AskForPersonProfil) {
@@ -127,10 +133,15 @@ impl HttpApp {
 
     fn check_incoming(&mut self) {
         let mut should_update_viewed_profil = false;
+
         for message in self.incoming_message.try_iter() {
             match message {
                 IncomingPacket::ClassList(class_list) => {
-                    let ClassList { mut classes } = class_list;
+                    let LoginResponse {
+                        logged,
+                        allowed_to_use_cmd,
+                        mut classes,
+                    } = class_list;
                     self.class_selector.set_classes(
                         classes
                             .iter_mut()
@@ -141,14 +152,30 @@ impl HttpApp {
                         classes
                             .into_iter()
                             .map(|(class_id, class)| (class_id, class.profiles)),
-                    )
+                    );
+                    should_update_viewed_profil = true;
+                    self.editor_selector.set_logged(logged);
+                    self.console = if allowed_to_use_cmd {
+                        Some(
+                            ConsoleBuilder::new()
+                                .prompt(">> ")
+                                .tab_quote_character('"')
+                                .scrollback_size(100)
+                                .history_size(100)
+                                .build(),
+                        )
+                    } else {
+                        None
+                    };
                 }
                 IncomingPacket::PersonProfileResponse(person_profile_response) => {
                     self.person_selector.set_profil(person_profile_response)
                 }
-                IncomingPacket::LoginUpdate { logged } => {
-                    should_update_viewed_profil = true;
-                    self.editor_selector.set_logged(logged)
+                IncomingPacket::CommandResponse(CommandResponse { text }) => {
+                    if let Some(console) = &mut self.console {
+                        console.write(&text);
+                        console.prompt();
+                    }
                 }
             }
         }
@@ -172,6 +199,7 @@ impl HttpApp {
             editor_selector,
             class_selector: ClassSelector::new(),
             person_selector: PersonSelector::new(),
+            console: None,
             ctx,
         };
         this.request_class_list();
@@ -186,28 +214,58 @@ impl App for HttpApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         self.check_incoming();
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            egui::TopBottomPanel::top("header").show_inside(ui, |ui| {
-                #[cfg(target_arch = "wasm32")]
-                ui.add_space(200.0); // Jasmine I'm going to kill you
-                                     // ugliest way to leave free space to vote
+        // Jasmine I'm going to kill you
+        // ugliest way to leave free space
+        let spacing = if cfg!(target_arch = "wasm32") {
+            200.0
+        } else {
+            0.0
+        };
 
-                let action = self.editor_selector.update(ui);
+        egui::TopBottomPanel::top("header").show(ctx, |ui| {
+            ui.add_space(spacing);
 
-                match action {
-                    LoginAction::Login => {
-                        self.login(self.editor_selector.get_identity());
-                        if let Some(storage) = frame.storage_mut() {
-                            self.editor_selector.save(storage)
-                        }
+            let action = self.editor_selector.update(ui);
+
+            match action {
+                LoginAction::Login => {
+                    self.login(self.editor_selector.get_identity());
+                    if let Some(storage) = frame.storage_mut() {
+                        self.editor_selector.save(storage)
                     }
-                    LoginAction::Logout => self.logout(),
-                    _ => (),
                 }
+                LoginAction::Logout => self.logout(),
+                _ => (),
+            }
 
-                self.class_selector.update(ui);
-            });
+            self.class_selector.update(ui);
+        });
 
+        if let Some(console) = &mut self.console {
+            let inner = egui::Window::new("CMD")
+                .default_open(false)
+                .default_height(600.0)
+                .constrain_to(Rect::everything_below(spacing))
+                .resizable(true)
+                .show(ctx, |ui| {
+                    let result = console.draw(ui);
+                    if let ConsoleEvent::Command(text) = result {
+                        Some(text)
+                    } else {
+                        None
+                    }
+                });
+
+            if let Some(InnerResponse {
+                inner: Some(Some(text)),
+                ..
+            }) = inner
+            {
+                self.input_cmd(CommandInput { text })
+            }
+        }
+
+        egui::CentralPanel::default().show(ctx, |ui| {
             let Some(selected_class) = self.class_selector.get_selected() else {
                 return;
             };

@@ -1,5 +1,4 @@
 use crate::data_server::permissions::InteractionPermission;
-use structopt::clap::arg_enum;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -61,19 +60,27 @@ pub struct RemoveFromClass {
     pub class_name: String,
 }
 
-arg_enum! {
-    #[derive(Debug)]
-    pub enum PermissionKind {
-        Vote,
-        Delete,
-        Protect,
-    }
+#[derive(Debug, StructOpt)]
+pub enum PermissionKind {
+    Vote {
+        permission: InteractionPermission,
+    },
+    Delete {
+        permission: InteractionPermission,
+    },
+    Protect {
+        permission: InteractionPermission,
+    },
+    UseCmd {
+        #[structopt(parse(try_from_str))]
+        permission: bool,
+    },
 }
 
 #[derive(Debug, StructOpt)]
-#[structopt(about = "change permission to class")]
+#[structopt(about = "change permission of someone")]
 pub struct ChangePermission {
     pub name: String,
+    #[structopt(subcommand)]
     pub kind: PermissionKind,
-    pub permission: InteractionPermission,
 }

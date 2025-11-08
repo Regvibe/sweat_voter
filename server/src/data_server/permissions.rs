@@ -36,6 +36,7 @@ impl InteractionPermission {
         *self == Self::SameClass
     }
 }
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Permissions {
     /// weather a user is allowed to vote/add nickname for someone
@@ -50,6 +51,14 @@ pub struct Permissions {
     #[serde(skip_serializing_if = "InteractionPermission::is_forbidden")]
     #[serde(default = "InteractionPermission::forbidden")]
     pub protect_nickname: InteractionPermission,
+
+    #[serde(skip_serializing_if = "not")]
+    #[serde(default = "bool::default")]
+    pub allowed_to_use_cmd: bool,
+}
+
+fn not(b: &bool) -> bool {
+    !b
 }
 
 impl Default for Permissions {
@@ -58,6 +67,7 @@ impl Default for Permissions {
             vote: InteractionPermission::SameClass,
             delete: InteractionPermission::YourSelf,
             protect_nickname: InteractionPermission::Forbidden,
+            allowed_to_use_cmd: false,
         }
     }
 }
