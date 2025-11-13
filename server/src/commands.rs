@@ -54,6 +54,13 @@ pub struct AddToClass {
 }
 
 #[derive(Debug, StructOpt)]
+#[structopt(about = "add all person out of any class to a given class")]
+pub struct AddLonelyToClass {
+    pub class: String,
+}
+
+
+#[derive(Debug, StructOpt)]
 #[structopt(about = "add remove to class")]
 pub struct RemoveFromClass {
     pub profil_name: String,

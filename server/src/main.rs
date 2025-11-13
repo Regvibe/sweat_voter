@@ -1,10 +1,7 @@
 mod commands;
 mod data_server;
 
-use crate::commands::{
-    AddClass, AddProfil, AddToClass, ChangeName, ChangePassword, ChangePermission, DeleteClass,
-    DeleteProfil, PermissionKind, RemoveFromClass, ViewPassword,
-};
+use crate::commands::{AddClass, AddLonelyToClass, AddProfil, AddToClass, ChangeName, ChangePassword, ChangePermission, DeleteClass, DeleteProfil, PermissionKind, RemoveFromClass, ViewPassword};
 use crate::data_server::{compat, serialization, DataServer, NickNameProposition, ServerError};
 use actix_cors::Cors;
 use actix_files::Files;
@@ -147,6 +144,13 @@ impl AppState {
                 }
                 Ok(Some(output))
             }
+            Commands::AddLonelyPeopleToClass(AddLonelyToClass{ class }) => {
+                let people = server.find_id_out_of_any_class();
+                for id in people {
+                    server.add_to_class(id, &class)?;
+                }
+                Ok(None)
+            }
             Commands::ViewPassword(ViewPassword { name }) => {
                 let id = server.get_profil_id(&name)?;
                 let password = server.get_password(id)?;
@@ -165,7 +169,7 @@ impl AppState {
                 class_name,
             }) => {
                 let id = server.get_profil_id(&profil_name)?;
-                server.add_to_class(id, class_name)?;
+                server.add_to_class(id, &class_name)?;
                 Ok(None)
             }
             Commands::RemoveFromClass(RemoveFromClass {
@@ -356,6 +360,7 @@ enum Commands {
     AddClass(AddClass),
     DeleteClass(DeleteClass),
     ViewLonelyPeople,
+    AddLonelyPeopleToClass(AddLonelyToClass),
     ViewPassword(ViewPassword),
     ChangePassword(ChangePassword),
     ChangeName(ChangeName),

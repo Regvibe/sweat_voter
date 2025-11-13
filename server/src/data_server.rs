@@ -360,6 +360,19 @@ impl DataServer {
         people
     }
 
+    pub fn find_id_out_of_any_class(&self) -> Vec<ProfilID> {
+        let mut people = vec![];
+        'outer: for id in self.id_to_profil.keys().cloned() {
+            for class in self.classes.values() {
+                if class.profiles.contains(&id) {
+                    continue 'outer;
+                }
+            }
+            people.push(id);
+        }
+        people
+    }
+
     pub fn get_password(&self, id: ProfilID) -> Result<String, ServerError> {
         let profil = self.id_to_profil.get(&id).ok_or(PersonDoesntExist)?;
         Ok(profil.identity.password.clone())
@@ -393,12 +406,12 @@ impl DataServer {
     pub fn add_to_class(
         &mut self,
         profil_id: ProfilID,
-        class_name: String,
+        class_name: &str,
     ) -> Result<(), ServerError> {
         let (_, class) = self
             .classes
             .iter_mut()
-            .find(|(_, class)| *class.name == class_name)
+            .find(|(_, class)| class.name == class_name)
             .ok_or(ClassDoesntExist)?;
         if class.profiles.insert(profil_id) {
             Ok(())
