@@ -8,6 +8,11 @@ pub mod c2s {
     }
 
     #[derive(Deserialize, Serialize, Debug, Clone)]
+    pub struct ChangePassword {
+        pub new_password: String,
+    }
+
+    #[derive(Deserialize, Serialize, Debug, Clone)]
     pub struct CommandInput {
         pub text: String,
     }

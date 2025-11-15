@@ -25,6 +25,7 @@ use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::task::spawn_blocking;
 use tracing::info;
+use common::packets::c2s;
 use common::packets::s2c::CommandResponse;
 use crate::data_server::permissions::Permissions;
 
@@ -212,6 +213,20 @@ async fn login(
         actix_identity::Identity::login(&req.extensions(), login.identity.name.clone()).unwrap();
     };
     web::Json(server.class_list(id))
+}
+
+#[actix_web::post("/change_password")]
+async fn change_password(new_password: web::Json<c2s::ChangePassword>, state: web::Data<State>, user: Option<actix_identity::Identity>) -> impl Responder {
+
+    let server = &mut state.lock().unwrap().data_server;
+    let Some(id) = get_id(&server, user) else {
+        return HttpResponse::Unauthorized();
+    };
+    if server.change_password(id, new_password.0.new_password).is_ok() {
+        HttpResponse::Ok()
+    } else {
+        HttpResponse::BadRequest()
+    }
 }
 
 #[actix_web::post("/logout")]
@@ -459,6 +474,7 @@ async fn main() -> std::io::Result<()> {
 fn routes(cfg: &mut ServiceConfig) {
     cfg.service(login);
     cfg.service(logout);
+    cfg.service(change_password);
     cfg.service(list_class);
     cfg.service(person_profile);
     cfg.service(delete_nickname);

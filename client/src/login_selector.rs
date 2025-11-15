@@ -1,14 +1,17 @@
 use common::Identity;
+use crate::password_selector::{PasswordSelector, Response};
 
 pub struct EditorSelector {
     name: String,
     password: String,
     logged: bool,
+    change_password: Option<PasswordSelector>,
 }
 
 pub enum LoginAction {
     Login,
     Logout,
+    ChangePassword(String),
     None,
 }
 
@@ -27,6 +30,7 @@ impl EditorSelector {
                 .flatten()
                 .unwrap_or(String::new()),
             logged: false,
+            change_password: None,
         }
     }
 
@@ -36,7 +40,13 @@ impl EditorSelector {
 
     fn display_logout(&mut self, ui: &mut egui::Ui) -> bool {
         ui.label(format!("connecté en tant que {}", self.name));
-        ui.button("se déconnecter").clicked()
+        ui.horizontal(|ui| {
+            let r = ui.button("se déconnecter").clicked();
+            if self.change_password.is_none() && ui.button("changer le mot de passe").clicked() {
+                self.change_password = Some(PasswordSelector::default());
+            }
+            r
+        }).inner
     }
 
     pub fn update(&mut self, ui: &mut egui::Ui) -> LoginAction {
@@ -44,7 +54,18 @@ impl EditorSelector {
             if self.display_logout(ui) {
                 LoginAction::Logout
             } else {
-                LoginAction::None
+                match self.change_password.as_mut().map(|a| a.display(ui)).unwrap_or(Response::None) {
+                    Response::None => LoginAction::None,
+                    Response::Back => {
+                        self.change_password = None;
+                        LoginAction::None
+                    }
+                    Response::Changed(new_password) => {
+                        self.change_password = None;
+                        self.password = new_password.clone();
+                        LoginAction::ChangePassword(new_password)
+                    }
+                }
             }
         } else {
             if self.display_login(ui) {

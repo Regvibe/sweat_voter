@@ -2,9 +2,7 @@ use crate::class_selector::ClassSelector;
 use crate::console::{ConsoleBuilder, ConsoleEvent, ConsoleWindow};
 use crate::login_selector::{EditorSelector, LoginAction};
 use crate::person_selector::{PersonSelector, ProfilAction};
-use common::packets::c2s::{
-    AskForPersonProfil, CommandInput, DeleteNickname, Login, UpdateNicknameProtection, VoteNickname,
-};
+use common::packets::c2s::{AskForPersonProfil, ChangePassword, CommandInput, DeleteNickname, Login, UpdateNicknameProtection, VoteNickname};
 use common::packets::s2c::{CommandResponse, LoginResponse, Profile};
 use common::Identity;
 use eframe::App;
@@ -90,6 +88,13 @@ impl HttpApp {
     fn logout(&mut self) {
         let request = ehttp::Request::post(format!("{}logout", Self::ROOT), vec![]);
         self.fetch(request, Self::LOGIN_RESPONSE_HANDLER)
+    }
+
+    fn change_password(&mut self, new_password: String) {
+        let request = ehttp::Request::json(format!("{}change_password", Self::ROOT), &ChangePassword {
+            new_password,
+        }).expect("failed_to_create_request");
+        self.fetch(request, |_| None);
     }
 
     fn input_cmd(&mut self, input: CommandInput) {
@@ -235,6 +240,12 @@ impl App for HttpApp {
                     }
                 }
                 LoginAction::Logout => self.logout(),
+                LoginAction::ChangePassword(password) => {
+                    if let Some(storage) = frame.storage_mut() {
+                        self.editor_selector.save(storage)
+                    }
+                    self.change_password(password)
+                }
                 _ => (),
             }
 
