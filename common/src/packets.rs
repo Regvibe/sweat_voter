@@ -31,7 +31,12 @@ pub mod c2s {
     }
 
     #[derive(Deserialize, Serialize, Debug, Clone)]
-    pub struct AskForPersonProfil {
+    pub struct AskForNicknameList {
+        pub profil: ProfilID,
+    }
+
+    #[derive(Deserialize, Serialize, Debug, Clone)]
+    pub struct AskForProfilStats {
         pub profil: ProfilID,
     }
 
@@ -74,10 +79,19 @@ pub mod s2c {
     }
 
     #[derive(Deserialize, Serialize, Debug, Clone)]
-    pub struct Profile {
+    pub struct NicknameList {
         pub profil_id: ProfilID,
         pub nicknames: Vec<NicknameStatut>,
         pub allowed_to_vote: bool,
         pub allowed_to_protect: bool,
+    }
+
+    #[derive(Deserialize, Serialize, Debug, Clone, Default)]
+    pub struct ProfilStats {
+        pub profil_id: ProfilID,
+        pub total_votes: i32,
+        pub total_propositions: i32,
+        pub numbers_of_nickname: usize,
+        pub numbers_of_classes: usize,
     }
 }

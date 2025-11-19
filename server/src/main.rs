@@ -1,8 +1,12 @@
 mod commands;
 mod data_server;
 
-use crate::commands::{AddClass, AddLonelyToClass, AddProfil, AddToClass, ChangeName, ChangePassword, ChangePermission, DeleteClass, DeleteProfil, PermissionKind, RemoveFromClass, ViewPassword};
-use crate::data_server::{compat, serialization, DataServer, NickNameProposition, ServerError};
+use crate::commands::{
+    AddClass, AddLonelyToClass, AddProfil, AddToClass, ChangeName, ChangePassword,
+    ChangePermission, DeleteClass, DeleteProfil, PermissionKind, RemoveFromClass, ViewPassword,
+};
+use crate::data_server::permissions::Permissions;
+use crate::data_server::{serialization, DataServer, NickNameProposition, ServerError};
 use actix_cors::Cors;
 use actix_files::Files;
 use actix_identity::IdentityMiddleware;
@@ -14,10 +18,14 @@ use actix_web::{
     web, web::ServiceConfig, App, Either, HttpMessage, HttpRequest, HttpResponse, HttpServer,
     Responder,
 };
-use common::packets::c2s::{AskForPersonProfil, CommandInput, DeleteNickname, Login, UpdateNicknameProtection, VoteNickname};
+use common::packets::c2s;
+use common::packets::c2s::{
+    AskForNicknameList, AskForProfilStats, CommandInput, DeleteNickname, Login,
+    UpdateNicknameProtection, VoteNickname,
+};
+use common::packets::s2c::CommandResponse;
 use common::ProfilID;
 use std::collections::HashMap;
-use std::fs;
 use std::fs::File;
 use std::io::stdin;
 use std::sync::Mutex;
@@ -25,9 +33,6 @@ use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::task::spawn_blocking;
 use tracing::info;
-use common::packets::c2s;
-use common::packets::s2c::CommandResponse;
-use crate::data_server::permissions::Permissions;
 
 extern crate tracing;
 
@@ -70,26 +75,6 @@ impl AppState {
         }
     }
 
-    fn load_old_nicknames(data_server: &mut DataServer) {
-        let files = fs::read_dir("./classes").expect("Failed to read dir");
-        for file in files.flatten() {
-            let path = file.path();
-            if path.is_file() && path.extension() == Some("json".as_ref()) {
-                let name = path
-                    .file_stem()
-                    .get_or_insert("unknown".as_ref())
-                    .to_string_lossy()
-                    .to_string();
-
-                info!("found class: {} at {:?}", name, path);
-                let json = File::open(&path).unwrap();
-                let participants: compat::Group = serde_json::from_reader(json).unwrap();
-                data_server.import_old_nickname(participants);
-                let _ = fs::remove_file(&path);
-            }
-        }
-    }
-
     fn id_map() -> serialization::IdMap {
         let Ok(file) = File::open("id_map.json") else {
             return Default::default();
@@ -108,8 +93,6 @@ impl AppState {
         if let Some(nicknames) = Self::load_nicknames() {
             data_server.load_proposition(nicknames);
         }
-
-        Self::load_old_nicknames(&mut data_server);
 
         let generated_id_map = data_server.build_id_map();
 
@@ -145,7 +128,7 @@ impl AppState {
                 }
                 Ok(Some(output))
             }
-            Commands::AddLonelyPeopleToClass(AddLonelyToClass{ class }) => {
+            Commands::AddLonelyPeopleToClass(AddLonelyToClass { class }) => {
                 let people = server.find_id_out_of_any_class();
                 for id in people {
                     server.add_to_class(id, &class)?;
@@ -216,13 +199,19 @@ async fn login(
 }
 
 #[actix_web::post("/change_password")]
-async fn change_password(new_password: web::Json<c2s::ChangePassword>, state: web::Data<State>, user: Option<actix_identity::Identity>) -> impl Responder {
-
+async fn change_password(
+    new_password: web::Json<c2s::ChangePassword>,
+    state: web::Data<State>,
+    user: Option<actix_identity::Identity>,
+) -> impl Responder {
     let server = &mut state.lock().unwrap().data_server;
     let Some(id) = get_id(&server, user) else {
         return HttpResponse::Unauthorized();
     };
-    if server.change_password(id, new_password.0.new_password).is_ok() {
+    if server
+        .change_password(id, new_password.0.new_password)
+        .is_ok()
+    {
         HttpResponse::Ok()
     } else {
         HttpResponse::BadRequest()
@@ -248,16 +237,29 @@ async fn list_class(
     web::Json(server.class_list(id))
 }
 
-#[actix_web::post("/person_profile")]
-async fn person_profile(
-    asked: web::Json<AskForPersonProfil>,
+#[actix_web::post("/nickname_list")]
+async fn nickname_list(
+    asked: web::Json<AskForNicknameList>,
     state: web::Data<State>,
     user: Option<actix_identity::Identity>,
 ) -> impl Responder {
-    let AskForPersonProfil { profil } = asked.0;
+    let AskForNicknameList { profil } = asked.0;
     let server = &state.lock().unwrap().data_server;
     let id = get_id(&server, user);
-    web::Json(server.personne_profil(id, profil))
+    web::Json(server.nickname_list(id, profil))
+}
+
+#[actix_web::post("/profil_stats")]
+async fn profil_stats(
+    asked: web::Json<AskForProfilStats>,
+    state: web::Data<State>,
+) -> impl Responder {
+    let AskForProfilStats { profil } = asked.0;
+    let server = &state.lock().unwrap().data_server;
+    match server.profil_stats(profil) {
+        None => Either::Left(HttpResponse::BadRequest()),
+        Some(s) => Either::Right(web::Json(s)),
+    }
 }
 
 #[actix_web::post("/vote_nickname")]
@@ -271,7 +273,7 @@ async fn vote_nickname(
     let id = get_id(&server, user);
     if let Some(id) = id {
         server.vote(id, target, nickname);
-        Either::Left(web::Json(server.personne_profil(Some(id), target)))
+        Either::Left(web::Json(server.nickname_list(Some(id), target)))
     } else {
         Either::Right(HttpResponse::Unauthorized())
     }
@@ -289,7 +291,7 @@ async fn delete_nickname(
 
     if let Some(id) = id {
         server.delete(id, target, nickname);
-        Either::Left(web::Json(server.personne_profil(Some(id), target)))
+        Either::Left(web::Json(server.nickname_list(Some(id), target)))
     } else {
         Either::Right(HttpResponse::Unauthorized())
     }
@@ -311,7 +313,7 @@ async fn update_protection_nickname(
 
     if let Some(id) = id {
         server.update_nickname_protection(id, target, nickname, protection_statut);
-        Either::Left(web::Json(server.personne_profil(Some(id), target)))
+        Either::Left(web::Json(server.nickname_list(Some(id), target)))
     } else {
         Either::Right(HttpResponse::Unauthorized())
     }
@@ -321,15 +323,23 @@ async fn update_protection_nickname(
 async fn cmd_input(
     cmd: web::Json<CommandInput>,
     state: web::Data<State>,
-    user: Option<actix_identity::Identity>
+    user: Option<actix_identity::Identity>,
 ) -> impl Responder {
     let app = &mut state.lock().unwrap();
-    let Some(id) = get_id(&app.data_server, user) else { return Either::Right(HttpResponse::Unauthorized()); };
+    let Some(id) = get_id(&app.data_server, user) else {
+        return Either::Right(HttpResponse::Unauthorized());
+    };
 
-    if let Some(Permissions{ allowed_to_use_cmd: false, .. }) = app.data_server.get_permission(id) { return Either::Right(HttpResponse::Unauthorized()); };
+    if let Some(Permissions {
+        allowed_to_use_cmd: false,
+        ..
+    }) = app.data_server.get_permission(id)
+    {
+        return Either::Right(HttpResponse::Unauthorized());
+    };
 
     let Some(inputs) = shlex::split(&cmd.text) else {
-        return Either::Left(web::Json(CommandResponse{
+        return Either::Left(web::Json(CommandResponse {
             text: "this command could not be parsed, check your quotes".to_string(),
         }));
     };
@@ -339,7 +349,7 @@ async fn cmd_input(
     let command = match command {
         Ok(command) => Commands::from_clap(&command),
         Err(e) => {
-            return Either::Left(web::Json(CommandResponse{
+            return Either::Left(web::Json(CommandResponse {
                 text: e.to_string(),
             }));
         }
@@ -352,11 +362,8 @@ async fn cmd_input(
         Err(e) => e.to_string(),
     };
 
-    Either::Left(web::Json(CommandResponse{
-        text
-    }))
+    Either::Left(web::Json(CommandResponse { text }))
 }
-
 
 async fn save_loop(state: web::Data<Mutex<AppState>>) {
     let mut interval = actix_web::rt::time::interval(std::time::Duration::from_secs(60));
@@ -476,7 +483,8 @@ fn routes(cfg: &mut ServiceConfig) {
     cfg.service(logout);
     cfg.service(change_password);
     cfg.service(list_class);
-    cfg.service(person_profile);
+    cfg.service(nickname_list);
+    cfg.service(profil_stats);
     cfg.service(delete_nickname);
     cfg.service(vote_nickname);
     cfg.service(update_protection_nickname);
