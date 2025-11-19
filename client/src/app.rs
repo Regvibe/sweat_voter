@@ -1,9 +1,14 @@
 use crate::class_selector::ClassSelector;
 use crate::console::{ConsoleBuilder, ConsoleEvent, ConsoleWindow};
 use crate::login_selector::{EditorSelector, LoginAction};
-use crate::person_selector::{PersonSelector, ProfilAction};
-use common::packets::c2s::{AskForPersonProfil, ChangePassword, CommandInput, DeleteNickname, Login, UpdateNicknameProtection, VoteNickname};
-use common::packets::s2c::{CommandResponse, LoginResponse, Profile};
+use crate::nickname_viewer::{NickNameViewer, NicknameViewerAction};
+use crate::person_selector::{PersonSelector, Selection};
+use crate::stats_viewer::StatsViewer;
+use common::packets::c2s::{
+    AskForNicknameList, AskForProfilStats, ChangePassword, CommandInput, DeleteNickname, Login,
+    UpdateNicknameProtection, VoteNickname,
+};
+use common::packets::s2c::{CommandResponse, LoginResponse, NicknameList, ProfilStats};
 use common::Identity;
 use eframe::App;
 use egui::{InnerResponse, Rect, TextBuffer};
@@ -13,7 +18,8 @@ use std::sync::mpsc::{Receiver, Sender};
 
 enum IncomingPacket {
     ClassList(LoginResponse),
-    PersonProfileResponse(Profile),
+    NicknameList(NicknameList),
+    ProfilStats(ProfilStats),
     CommandResponse(CommandResponse),
 }
 
@@ -23,6 +29,8 @@ pub struct HttpApp {
     editor_selector: EditorSelector,
     class_selector: ClassSelector,
     person_selector: PersonSelector,
+    nickname_viewer: NickNameViewer,
+    stats_viewer: StatsViewer,
     console: Option<ConsoleWindow>,
     ctx: egui::Context,
 }
@@ -73,8 +81,8 @@ impl HttpApp {
         });
     }
 
-    const PROFILE_RESPONSE_HANDLER: fn(ehttp::Response) -> Option<IncomingPacket> =
-        |response| Some(IncomingPacket::PersonProfileResponse(response.json().ok()?));
+    const NICKNAME_LIST_HANDLER: fn(ehttp::Response) -> Option<IncomingPacket> =
+        |response| Some(IncomingPacket::NicknameList(response.json().ok()?));
 
     const LOGIN_RESPONSE_HANDLER: fn(ehttp::Response) -> Option<IncomingPacket> =
         |response| Some(IncomingPacket::ClassList(response.json().ok()?));
@@ -91,9 +99,11 @@ impl HttpApp {
     }
 
     fn change_password(&mut self, new_password: String) {
-        let request = ehttp::Request::json(format!("{}change_password", Self::ROOT), &ChangePassword {
-            new_password,
-        }).expect("failed_to_create_request");
+        let request = ehttp::Request::json(
+            format!("{}change_password", Self::ROOT),
+            &ChangePassword { new_password },
+        )
+        .expect("failed_to_create_request");
         self.fetch(request, |_| None);
     }
 
@@ -105,26 +115,37 @@ impl HttpApp {
         });
     }
 
-    fn request_person_profile(&mut self, ask_for_person_profile: AskForPersonProfil) {
+    fn request_nickname_list(&mut self, ask_for_person_profil: AskForNicknameList) {
         let request = ehttp::Request::json(
-            format!("{}person_profile", Self::ROOT),
-            &ask_for_person_profile,
+            format!("{}nickname_list", Self::ROOT),
+            &ask_for_person_profil,
         )
         .expect("Failed to create request");
-        self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
+        self.fetch(request, Self::NICKNAME_LIST_HANDLER);
+    }
+
+    fn request_profil_stats(&mut self, ask_for_person_profil: AskForProfilStats) {
+        let request = ehttp::Request::json(
+            format!("{}profil_stats", Self::ROOT),
+            &ask_for_person_profil,
+        )
+        .expect("Failed to create request");
+        self.fetch(request, |response| {
+            Some(IncomingPacket::ProfilStats(response.json().ok()?))
+        });
     }
 
     fn vote_nickname(&mut self, vote_nickname: VoteNickname) {
         let request = ehttp::Request::json(format!("{}vote_nickname", Self::ROOT), &vote_nickname)
             .expect("Failed to create request");
-        self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
+        self.fetch(request, Self::NICKNAME_LIST_HANDLER);
     }
 
     fn delete_nickname(&mut self, delete_nickname: DeleteNickname) {
         let request =
             ehttp::Request::json(format!("{}delete_nickname", Self::ROOT), &delete_nickname)
                 .expect("Failed to create request");
-        self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
+        self.fetch(request, Self::NICKNAME_LIST_HANDLER);
     }
 
     fn update_nickname_protection(&mut self, update_nickname_protection: UpdateNicknameProtection) {
@@ -133,7 +154,7 @@ impl HttpApp {
             &update_nickname_protection,
         )
         .expect("Failed to create request");
-        self.fetch(request, Self::PROFILE_RESPONSE_HANDLER);
+        self.fetch(request, Self::NICKNAME_LIST_HANDLER);
     }
 
     fn check_incoming(&mut self) {
@@ -173,9 +194,10 @@ impl HttpApp {
                         None
                     };
                 }
-                IncomingPacket::PersonProfileResponse(person_profile_response) => {
-                    self.person_selector.set_profil(person_profile_response)
+                IncomingPacket::NicknameList(person_profil_response) => {
+                    self.nickname_viewer.set_profil(person_profil_response)
                 }
+                IncomingPacket::ProfilStats(stats) => self.stats_viewer.set_stats(stats),
                 IncomingPacket::CommandResponse(CommandResponse { text }) => {
                     if let Some(console) = &mut self.console {
                         console.write(&text);
@@ -189,7 +211,7 @@ impl HttpApp {
             .get_selected_profil()
             .filter(|_| should_update_viewed_profil)
         {
-            self.request_person_profile(AskForPersonProfil { profil })
+            self.request_nickname_list(AskForNicknameList { profil })
         }
     }
 
@@ -202,8 +224,10 @@ impl HttpApp {
             incoming_message,
             sender,
             editor_selector,
-            class_selector: ClassSelector::new(),
-            person_selector: PersonSelector::new(),
+            class_selector: Default::default(),
+            person_selector: Default::default(),
+            nickname_viewer: Default::default(),
+            stats_viewer: Default::default(),
             console: None,
             ctx,
         };
@@ -282,19 +306,36 @@ impl App for HttpApp {
             };
 
             // when has chosen a profil to view, we need to fetch it from the server
-            let requested_profiles = self
-                .person_selector
-                .display_name_selector(ui, selected_class);
+            let requested_profiles = self.person_selector.update(ui, selected_class);
             if let Some(profil) = requested_profiles {
-                self.request_person_profile(AskForPersonProfil { profil })
+                match profil {
+                    Selection::ViewNickname(profil) => {
+                        self.request_nickname_list(AskForNicknameList { profil })
+                    }
+                    Selection::ViewData(profil) => {
+                        self.request_profil_stats(AskForProfilStats { profil })
+                    }
+                }
             }
 
-            let action = self.person_selector.update_nickname_selector(ui);
-            match action {
-                ProfilAction::Delete(delete_nickname) => self.delete_nickname(delete_nickname),
-                ProfilAction::Vote(vote_nickname) => self.vote_nickname(vote_nickname),
-                ProfilAction::UpdateProtection(update) => self.update_nickname_protection(update),
-                _ => {}
+            if let Some(selection) = self.person_selector.get_selection() {
+                match selection {
+                    Selection::ViewNickname(profil) => {
+                        match self.nickname_viewer.update(ui, profil) {
+                            NicknameViewerAction::Delete(delete_nickname) => {
+                                self.delete_nickname(delete_nickname)
+                            }
+                            NicknameViewerAction::Vote(vote_nickname) => {
+                                self.vote_nickname(vote_nickname)
+                            }
+                            NicknameViewerAction::UpdateProtection(update) => {
+                                self.update_nickname_protection(update)
+                            }
+                            _ => {}
+                        }
+                    }
+                    Selection::ViewData(profil) => self.stats_viewer.update(ui, profil),
+                }
             }
         });
     }

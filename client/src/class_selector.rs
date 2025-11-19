@@ -1,19 +1,14 @@
 use common::ClassID;
 use egui::Spinner;
 
+/// List of classes used to display
+#[derive(Default)]
 pub struct ClassSelector {
     classes: Vec<(ClassID, String)>,
     selected: Option<ClassID>,
 }
 
 impl ClassSelector {
-    pub fn new() -> Self {
-        Self {
-            classes: Vec::new(),
-            selected: None,
-        }
-    }
-
     pub fn set_classes(&mut self, classes: Vec<(ClassID, String)>) {
         self.classes = classes;
         self.classes.sort_by(|(_, a), (_, b)| a.cmp(b));

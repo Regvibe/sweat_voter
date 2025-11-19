@@ -20,6 +20,8 @@ pub mod serialization;
 pub struct Profil {
     identity: Identity,
     permissions: Permissions,
+    total_votes: i32,
+    total_propositions: i32,
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +105,8 @@ impl DataServer {
                     Profil {
                         identity,
                         permissions,
+                        total_votes: 0,
+                        total_propositions: 0,
                     },
                 )
             },
@@ -178,6 +182,7 @@ impl DataServer {
         }
     }
 
+    // todo: this might need to be cached
     pub fn build_people_repartition(&self) -> serialization::PeopleRepartition {
         let mut profiles: Vec<_> = self
             .id_to_profil
@@ -216,39 +221,20 @@ impl DataServer {
         &mut self,
         nick_name_proposition: HashMap<ProfilID, Vec<NickNameProposition>>,
     ) {
-        self.nick_name_proposition = MutationTracker::new(nick_name_proposition)
-    }
-
-    pub fn import_old_nickname(&mut self, group: compat::Group) {
-        for (name, (_, old_nicknames)) in group.profiles {
-            if old_nicknames.is_empty() {
-                continue;
+        // count total of proposition and votes
+        for (_, propositions) in nick_name_proposition.iter() {
+            for proposition in propositions {
+                if let Some(profil) = self.id_to_profil.get_mut(&proposition.author) {
+                    profil.total_propositions += 1;
+                }
+                for voter in proposition.votes.iter() {
+                    if let Some(voter) = self.id_to_profil.get_mut(voter) {
+                        voter.total_votes += 1;
+                    };
+                }
             }
-            let Some(id) = self.name_to_id.get(&name).cloned() else {
-                continue;
-            };
-            let nicknames = self.nick_name_proposition.entry(id).or_insert(vec![]);
-
-            nicknames.extend(old_nicknames.into_iter().flat_map(
-                |compat::Nickname {
-                     nickname: proposition,
-                     votes,
-                 }| {
-                    let votes: Vec<_> = votes
-                        .into_iter()
-                        .flat_map(|voter| self.name_to_id.get(&voter).cloned())
-                        .collect();
-                    // take the first voter as the owner, else the person that will receive the nickname
-                    let author = votes.first().cloned().unwrap_or(id);
-                    Some(NickNameProposition {
-                        author,
-                        proposition,
-                        votes,
-                        protected: false,
-                    })
-                },
-            ))
         }
+        self.nick_name_proposition = MutationTracker::new(nick_name_proposition)
     }
 
     pub fn try_to_save_nickname(&mut self) -> Option<HashMap<ProfilID, Vec<NickNameProposition>>> {
@@ -289,6 +275,8 @@ impl DataServer {
             Profil {
                 identity: Identity { name, password },
                 permissions: Default::default(),
+                total_votes: 0,
+                total_propositions: 0,
             },
         );
         Ok(())
@@ -486,15 +474,27 @@ impl DataServer {
             _ => return,
         };
 
-        let mut found = false;
+        let mut delta_votes = 0;
+        let mut delta_propositions = 0;
+
+        let mut found = false; // we don't use return here because we **need** to cover all nicknames
         for nickname in nicknames.iter_mut() {
-            nickname.votes.retain(|p| *p != voter);
+            nickname.votes.retain(|p| {
+                let remove = *p != voter;
+                if remove {
+                    delta_votes -= 1;
+                };
+                remove
+            });
             if nickname.proposition == proposition {
                 found = true;
-                nickname.votes.push(voter)
+                nickname.votes.push(voter);
+                delta_votes += 1;
             }
         }
         if !found {
+            delta_propositions += 1;
+            delta_votes += 1;
             nicknames.push(NickNameProposition {
                 author: voter,
                 proposition,
@@ -502,6 +502,11 @@ impl DataServer {
                 protected: false,
             })
         }
+        let _ = nicknames;
+
+        let voter = self.id_to_profil.get_mut(&voter).unwrap();
+        voter.total_propositions += delta_propositions;
+        voter.total_votes += delta_votes;
     }
 
     /// Attempt to perform a delete operation
@@ -524,7 +529,15 @@ impl DataServer {
         if (is_allowed_to_delete || nicknames[i].author == deleter)
             && (!nicknames[i].protected || can_by_pass_protect)
         {
-            nicknames.swap_remove(i);
+            let proposition = nicknames.swap_remove(i);
+            if let Some(profil) = self.id_to_profil.get_mut(&proposition.author) {
+                profil.total_propositions -= 1;
+            }
+            for voter in proposition.votes.iter() {
+                if let Some(voter) = self.id_to_profil.get_mut(voter) {
+                    voter.total_votes -= 1;
+                };
+            }
         }
     }
 
@@ -629,11 +642,11 @@ impl DataServer {
     }
 
     /// build a packet for a given identity
-    pub fn personne_profil(
+    pub fn nickname_list(
         &self,
         requester: Option<ProfilID>,
         asked_profil: ProfilID,
-    ) -> s2c::Profile {
+    ) -> s2c::NicknameList {
         let (allowed_to_vote, allowed_to_delete, allowed_to_protect) = requester
             .map(|r| self.get_permission_on_profil(r, asked_profil))
             .unwrap_or((false, false, false));
@@ -656,11 +669,31 @@ impl DataServer {
                 .collect(),
         };
 
-        s2c::Profile {
+        s2c::NicknameList {
             profil_id: asked_profil,
             nicknames,
             allowed_to_vote,
             allowed_to_protect,
         }
+    }
+
+    pub fn profil_stats(&self, asked_profil: ProfilID) -> Option<s2c::ProfilStats> {
+        let profil = self.id_to_profil.get(&asked_profil)?;
+
+        Some(s2c::ProfilStats {
+            profil_id: asked_profil,
+            total_votes: profil.total_votes,
+            total_propositions: profil.total_propositions,
+            numbers_of_nickname: self
+                .nick_name_proposition
+                .get(&asked_profil)
+                .map(|l| l.len())
+                .unwrap_or(0),
+            numbers_of_classes: self
+                .classes
+                .values()
+                .filter(|c| c.profiles.contains(&asked_profil))
+                .count(),
+        })
     }
 }
