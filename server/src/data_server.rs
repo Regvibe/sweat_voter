@@ -480,11 +480,11 @@ impl DataServer {
         let mut found = false; // we don't use return here because we **need** to cover all nicknames
         for nickname in nicknames.iter_mut() {
             nickname.votes.retain(|p| {
-                let remove = *p != voter;
-                if remove {
+                let keep = *p != voter;
+                if !keep {
                     delta_votes -= 1;
                 };
-                remove
+                keep
             });
             if nickname.proposition == proposition {
                 found = true;
