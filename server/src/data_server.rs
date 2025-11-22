@@ -304,6 +304,10 @@ impl DataServer {
             }
         }
 
+        for class in self.classes.values_mut() {
+            class.profiles.remove(&removed);
+        }
+
         Ok(())
     }
 
@@ -509,6 +513,7 @@ impl DataServer {
         }
         let _ = nicknames;
 
+        // we know that the profil exist since we already checked its permissions
         let voter = self.id_to_profil.get_mut(&voter).unwrap();
         voter.total_propositions += delta_propositions;
         voter.total_votes += delta_votes;
@@ -603,11 +608,12 @@ impl DataServer {
                         profiles: class
                             .profiles
                             .iter()
-                            .map(|profil| {
-                                (
-                                    *profil,
-                                    self.id_to_profil.get(profil).unwrap().identity.name.clone(),
-                                )
+                            .flat_map(|profil_id| {
+                                let profil = self.id_to_profil.get(profil_id)?;
+                                Some((
+                                    *profil_id,
+                                    profil.identity.name.clone(),
+                                ))
                             })
                             .collect(),
                     },
