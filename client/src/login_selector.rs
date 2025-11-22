@@ -1,6 +1,7 @@
-use common::Identity;
 use crate::password_selector::{PasswordSelector, Response};
+use common::Identity;
 
+/// Login field used on top of the UI
 pub struct EditorSelector {
     name: String,
     password: String,
@@ -46,7 +47,8 @@ impl EditorSelector {
                 self.change_password = Some(PasswordSelector::default());
             }
             r
-        }).inner
+        })
+        .inner
     }
 
     pub fn update(&mut self, ui: &mut egui::Ui) -> LoginAction {
@@ -54,7 +56,12 @@ impl EditorSelector {
             if self.display_logout(ui) {
                 LoginAction::Logout
             } else {
-                match self.change_password.as_mut().map(|a| a.display(ui)).unwrap_or(Response::None) {
+                match self
+                    .change_password
+                    .as_mut()
+                    .map(|a| a.display(ui))
+                    .unwrap_or(Response::None)
+                {
                     Response::None => LoginAction::None,
                     Response::Back => {
                         self.change_password = None;
