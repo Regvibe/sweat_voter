@@ -157,7 +157,10 @@ impl DataServer {
         let classes = HashMap::from_iter(class_iter);
 
         Self {
-            id_to_profil: MutationTracker::dirty(id_to_profil, last_class_id_used != last_profil_id_used_ref),
+            id_to_profil: MutationTracker::dirty(
+                id_to_profil,
+                last_class_id_used != last_profil_id_used_ref,
+            ),
             free_profil_id_beginning: last_profil_id_used,
             name_to_id: MutationTracker::new(name_to_id),
             classes: MutationTracker::dirty(classes, last_class_id_used != last_class_id_used),
@@ -254,9 +257,7 @@ impl DataServer {
     pub fn try_to_save_profils(
         &mut self,
     ) -> Option<(serialization::PeopleRepartition, serialization::IdMap)> {
-
-        if let Some(id_map) = self.build_id_map()
-        {
+        if let Some(id_map) = self.build_id_map() {
             let repartition = self.build_people_repartition();
             Some((repartition, id_map))
         } else {

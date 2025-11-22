@@ -15,10 +15,7 @@ impl<T> MutationTracker<T> {
     }
 
     pub fn dirty(inner: T, dirty: bool) -> Self {
-        Self {
-            inner,
-            dirty,
-        }
+        Self { inner, dirty }
     }
 
     pub fn clear_dirty(&mut self) -> bool {

@@ -5,7 +5,8 @@ use crate::commands::{
     AddClass, AddLonelyToClass, AddProfil, AddToClass, ChangeName, ChangePassword,
     ChangePermission, DeleteClass, DeleteProfil, PermissionKind, RemoveFromClass, ViewPassword,
 };
-use crate::data_server::{serialization, DataServer, NickNameProposition, ServerError};
+use crate::data_server::permissions::Permissions;
+use crate::data_server::{DataServer, NickNameProposition, ServerError};
 use actix_cors::Cors;
 use actix_files::Files;
 use actix_identity::IdentityMiddleware;
@@ -17,25 +18,24 @@ use actix_web::{
     web, web::ServiceConfig, App, Either, HttpMessage, HttpRequest, HttpResponse, HttpServer,
     Responder,
 };
+use common::packets::c2s;
 use common::packets::c2s::{
     AskForNicknameList, AskForProfilStats, CommandInput, DeleteNickname, Login,
     UpdateNicknameProtection, VoteNickname,
 };
 use common::packets::s2c::CommandResponse;
 use common::ProfilID;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::stdin;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex;
 use std::time::Duration;
-use serde::{Deserialize, Serialize};
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::task::spawn_blocking;
 use tracing::info;
-use common::packets::c2s;
-use crate::data_server::permissions::Permissions;
 
 extern crate tracing;
 
@@ -44,7 +44,7 @@ type State = Mutex<AppState>;
 #[derive(Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
 enum SaveFormat {
     Cbor,
-    Json
+    Json,
 }
 
 struct AppState {
@@ -101,12 +101,12 @@ impl AppState {
             (Some(cbor), None) => {
                 info!("loading {name}.cbor");
                 ciborium::from_reader(cbor).ok()
-            },
+            }
             (None, Some(json)) => {
                 info!("loading {name}.json");
                 serde_json::from_reader(json).ok()
             }
-            (Some(cbor),  Some(json)) => {
+            (Some(cbor), Some(json)) => {
                 if Self::is_more_recent_than(&cbor, &json).unwrap_or(format == SaveFormat::Cbor) {
                     info!("loading {name}.cbor");
                     ciborium::from_reader(cbor).ok()
@@ -114,17 +114,20 @@ impl AppState {
                     info!("loading {name}.json");
                     serde_json::from_reader(json).ok()
                 }
-            },
+            }
             (None, None) => None,
         }
     }
 
     fn new(save_format: SaveFormat) -> Mutex<Self> {
-        let people_repartition = Self::load_data(save_format, "classes").unwrap_or(Default::default());
+        let people_repartition =
+            Self::load_data(save_format, "classes").unwrap_or(Default::default());
         let id_map = Self::load_data(save_format, "id_map").unwrap_or(Default::default());
         let mut data_server = DataServer::new(people_repartition, id_map);
 
-        if let Some(nicknames)= Self::load_data::<HashMap<ProfilID, Vec<NickNameProposition>>>(save_format, "nicknames") {
+        if let Some(nicknames) =
+            Self::load_data::<HashMap<ProfilID, Vec<NickNameProposition>>>(save_format, "nicknames")
+        {
             info!("{} nicknames loaded", nicknames.len());
             data_server.load_proposition(nicknames);
         }
@@ -134,7 +137,10 @@ impl AppState {
             serde_json::to_writer_pretty(file, &generated_id_map).unwrap();
         }
 
-        Mutex::new(AppState { data_server, save_format })
+        Mutex::new(AppState {
+            data_server,
+            save_format,
+        })
     }
 
     fn execute_command(&mut self, command: Commands) -> Result<Option<String>, ServerError> {
@@ -481,7 +487,6 @@ impl Default for ServerConfig {
         }
     }
 }
-
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
