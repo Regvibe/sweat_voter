@@ -1,4 +1,4 @@
-use crate::data_server::permissions::{InteractionPermission, Permissions};
+use crate::data_server::permissions::Permissions;
 use common::{ClassID, Identity, ProfilID};
 use serde::{Deserialize, Serialize};
 
@@ -11,43 +11,10 @@ pub struct Profil {
     pub permissions: Permissions,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct PeopleRepartition {
     pub profiles: Vec<Profil>,
     pub classes: Vec<Class>,
-}
-
-impl PeopleRepartition {
-    pub fn template() -> Self {
-        let admin = Profil {
-            identity: Identity {
-                name: "Admin".to_string(),
-                password: "mdp".to_string(),
-            },
-            permissions: Permissions {
-                vote: InteractionPermission::AnyBody,
-                delete: InteractionPermission::SameClass,
-                protect_nickname: InteractionPermission::SameClass,
-                allowed_to_use_cmd: true,
-            },
-        };
-        let someone = Profil {
-            identity: Identity {
-                name: "Someone".to_string(),
-                password: "mdp".to_string(),
-            },
-            permissions: Default::default(),
-        };
-        let class = Class {
-            name: "TemplateClass".to_string(),
-            people: vec!["Admin".to_string(), "Someone".to_string()],
-        };
-
-        PeopleRepartition {
-            profiles: vec![admin, someone],
-            classes: vec![class],
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Default)]

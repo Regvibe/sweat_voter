@@ -10,6 +10,10 @@ template.json
 id_map.json
 nicknames.json
 classes.json
+id_map.cbor
+nicknames.cbor
+classes.cbor
+config.json
 /build
 /android_app/build
 

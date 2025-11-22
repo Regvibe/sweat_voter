@@ -12,7 +12,6 @@ use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::RandomState;
 
-pub mod compat;
 pub mod mutation_tracker;
 pub mod permissions;
 pub mod serialization;
@@ -80,11 +79,13 @@ impl DataServer {
         } = id_map;
 
         // process profil loading,
-        let mut last_profil_id_used = profil_mapping
+        let last_profil_id_used_ref = profil_mapping
             .iter()
             .fold(0, |acc, (ProfilID(x), _)| u32::max(*x, acc));
+        let mut last_profil_id_used = last_profil_id_used_ref;
         let mut raw_name_to_id_map: HashMap<_, _, RandomState> =
             HashMap::from_iter(profil_mapping.into_iter().map(|(id, name)| (name, id)));
+
         // this is a bit tricky to use since I want to reuse the same function for class building
         let mut get_profil_id = |name| {
             *raw_name_to_id_map.entry(name).or_insert_with(|| {
@@ -117,9 +118,10 @@ impl DataServer {
         let _ = get_profil_id;
 
         //class loading
-        let mut last_class_id_used = class_mapping
+        let last_class_id_used_ref = class_mapping
             .iter()
             .fold(0, |acc, (ClassID(x), _)| u32::max(*x, acc));
+        let mut last_class_id_used = last_class_id_used_ref;
         let raw_class_name_to_id_map: HashMap<_, _, RandomState> =
             HashMap::from_iter(class_mapping.into_iter().map(|(id, name)| (name, id)));
         let mut get_class_id = |name: &String| {
@@ -151,30 +153,34 @@ impl DataServer {
         let classes = HashMap::from_iter(class_iter);
 
         Self {
-            id_to_profil: MutationTracker::new(id_to_profil),
+            id_to_profil: MutationTracker::dirty(id_to_profil, last_class_id_used != last_profil_id_used_ref),
             free_profil_id_beginning: last_profil_id_used,
             name_to_id: MutationTracker::new(name_to_id),
-            classes: MutationTracker::new(classes),
+            classes: MutationTracker::dirty(classes, last_class_id_used != last_class_id_used),
             free_class_id_beginning: last_class_id_used,
             nick_name_proposition: Default::default(),
         }
     }
 
     // It kinda hurt to look at, but it's really straightforward: a bunch of map to correctly cast data
-    pub fn build_id_map(&self) -> serialization::IdMap {
-        let profil_mapping = self
-            .id_to_profil
-            .iter()
-            .map(|(id, profil)| (*id, profil.identity.name.clone()))
-            .collect();
-        let class_mapping = self
-            .classes
-            .iter()
-            .map(|(id, class)| (*id, class.name.clone()))
-            .collect();
-        serialization::IdMap {
-            profil_mapping,
-            class_mapping,
+    pub fn build_id_map(&mut self) -> Option<serialization::IdMap> {
+        if self.id_to_profil.clear_dirty() || self.classes.clear_dirty() {
+            let profil_mapping = self
+                .id_to_profil
+                .iter()
+                .map(|(id, profil)| (*id, profil.identity.name.clone()))
+                .collect();
+            let class_mapping = self
+                .classes
+                .iter()
+                .map(|(id, class)| (*id, class.name.clone()))
+                .collect();
+            Some(serialization::IdMap {
+                profil_mapping,
+                class_mapping,
+            })
+        } else {
+            None
         }
     }
 
@@ -219,38 +225,6 @@ impl DataServer {
         self.nick_name_proposition = MutationTracker::new(nick_name_proposition)
     }
 
-    pub fn import_old_nickname(&mut self, group: compat::Group) {
-        for (name, (_, old_nicknames)) in group.profiles {
-            if old_nicknames.is_empty() {
-                continue;
-            }
-            let Some(id) = self.name_to_id.get(&name).cloned() else {
-                continue;
-            };
-            let nicknames = self.nick_name_proposition.entry(id).or_insert(vec![]);
-
-            nicknames.extend(old_nicknames.into_iter().flat_map(
-                |compat::Nickname {
-                     nickname: proposition,
-                     votes,
-                 }| {
-                    let votes: Vec<_> = votes
-                        .into_iter()
-                        .flat_map(|voter| self.name_to_id.get(&voter).cloned())
-                        .collect();
-                    // take the first voter as the owner, else the person that will receive the nickname
-                    let author = votes.first().cloned().unwrap_or(id);
-                    Some(NickNameProposition {
-                        author,
-                        proposition,
-                        votes,
-                        protected: false,
-                    })
-                },
-            ))
-        }
-    }
-
     pub fn try_to_save_nickname(&mut self) -> Option<HashMap<ProfilID, Vec<NickNameProposition>>> {
         if self.nick_name_proposition.clear_dirty() {
             Some(self.nick_name_proposition.clone())
@@ -262,12 +236,10 @@ impl DataServer {
     pub fn try_to_save_profils(
         &mut self,
     ) -> Option<(serialization::PeopleRepartition, serialization::IdMap)> {
-        if self.id_to_profil.clear_dirty()
-            || self.name_to_id.clear_dirty()
-            || self.classes.clear_dirty()
+
+        if let Some(id_map) = self.build_id_map()
         {
             let repartition = self.build_people_repartition();
-            let id_map = self.build_id_map();
             Some((repartition, id_map))
         } else {
             None

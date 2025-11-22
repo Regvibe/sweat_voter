@@ -1,8 +1,10 @@
 mod commands;
 mod data_server;
 
+use std::cmp::PartialEq;
+use std::collections::HashMap;
 use crate::commands::{AddClass, AddLonelyToClass, AddProfil, AddToClass, ChangeName, ChangePassword, ChangePermission, DeleteClass, DeleteProfil, PermissionKind, RemoveFromClass, ViewPassword};
-use crate::data_server::{compat, serialization, DataServer, NickNameProposition, ServerError};
+use crate::data_server::{DataServer, NickNameProposition, ServerError};
 use actix_cors::Cors;
 use actix_files::Files;
 use actix_identity::IdentityMiddleware;
@@ -16,11 +18,12 @@ use actix_web::{
 };
 use common::packets::c2s::{AskForPersonProfil, CommandInput, DeleteNickname, Login, UpdateNicknameProtection, VoteNickname};
 use common::ProfilID;
-use std::collections::HashMap;
-use std::fs;
 use std::fs::File;
 use std::io::stdin;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex;
+use std::time::Duration;
+use serde::{Deserialize, Serialize};
 use structopt::clap::AppSettings;
 use structopt::StructOpt;
 use tokio::task::spawn_blocking;
@@ -33,90 +36,101 @@ extern crate tracing;
 
 type State = Mutex<AppState>;
 
+#[derive(Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
+enum SaveFormat {
+    Cbor,
+    Json
+}
+
+
 struct AppState {
     data_server: DataServer,
+    save_format: SaveFormat,
 }
 
 impl AppState {
     fn save(&mut self) {
-        if let Some(nicknames) = self.data_server.try_to_save_nickname() {
-            let file = File::create("nicknames.json").unwrap();
-            serde_json::to_writer_pretty(file, &nicknames).unwrap()
-        }
-        if let Some((repartition, id_map)) = self.data_server.try_to_save_profils() {
-            let file = File::create("classes.json").unwrap();
-            serde_json::to_writer_pretty(file, &repartition).unwrap();
-            let file = File::create("id_map.json").unwrap();
-            serde_json::to_writer_pretty(file, &id_map).unwrap();
-        }
-    }
+        match self.save_format {
+            SaveFormat::Json => {
+                if let Some(nicknames) = self.data_server.try_to_save_nickname() {
+                    let file = File::create("nicknames.json").unwrap();
+                    serde_json::to_writer_pretty(file, &nicknames).unwrap()
+                }
 
-    fn load_nicknames() -> Option<HashMap<ProfilID, Vec<NickNameProposition>>> {
-        let file = File::open("nicknames.json").ok()?;
-        serde_json::from_reader(file).ok()
-    }
+                if let Some((repartition, id_map)) = self.data_server.try_to_save_profils() {
+                    let file = File::create("classes.json").unwrap();
+                    serde_json::to_writer_pretty(file, &repartition).unwrap();
+                    let file = File::create("id_map.json").unwrap();
+                    serde_json::to_writer_pretty(file, &id_map).unwrap();
+                }
+            }
 
-    fn people_repartition() -> serialization::PeopleRepartition {
-        let file = File::open("classes.json");
+            SaveFormat::Cbor => {
+                if let Some(nicknames) = self.data_server.try_to_save_nickname() {
+                    let file = File::create("nicknames.cbor").unwrap();
+                    ciborium::into_writer(&nicknames, file).unwrap()
+                }
 
-        match file {
-            Ok(file) => serde_json::from_reader(file).unwrap(),
-            Err(_) => {
-                let template = serialization::PeopleRepartition::template();
-                let file = File::create("classes.json").expect("Failed to create a template file");
-                serde_json::to_writer_pretty(file, &template).unwrap();
-                template
+                if let Some((repartition, id_map)) = self.data_server.try_to_save_profils() {
+                    let file = File::create("classes.cbor").unwrap();
+                    ciborium::into_writer(&repartition, file).unwrap();
+                    let file = File::create("id_map.cbor").unwrap();
+                    ciborium::into_writer(&id_map, file).unwrap();
+                }
             }
         }
     }
 
-    fn load_old_nicknames(data_server: &mut DataServer) {
-        let files = fs::read_dir("./classes").expect("Failed to read dir");
-        for file in files.flatten() {
-            let path = file.path();
-            if path.is_file() && path.extension() == Some("json".as_ref()) {
-                let name = path
-                    .file_stem()
-                    .get_or_insert("unknown".as_ref())
-                    .to_string_lossy()
-                    .to_string();
+    /// return which file is the more recent, if unable to compare, return None,
+    fn is_more_recent_than(f1: &File, f2: &File) -> Option<bool> {
+        let time1 = f1.metadata().ok()?.modified().ok()?;
+        let time2 = f2.metadata().ok()?.modified().ok()?;
+        Some(time1 > time2)
+    }
 
-                info!("found class: {} at {:?}", name, path);
-                let json = File::open(&path).unwrap();
-                let participants: compat::Group = serde_json::from_reader(json).unwrap();
-                data_server.import_old_nickname(participants);
-                let _ = fs::remove_file(&path);
+    /// load data from a file, automatically choose between cbor and json depending on which one is the latest
+    fn load_data<T: for<'a> Deserialize<'a>>(format: SaveFormat, name: &str) -> Option<T> {
+        let cbor = File::open(format!("{name}.cbor")).ok();
+        let json = File::open(format!("{name}.json")).ok();
+
+        match (cbor, json) {
+            (Some(cbor), None) => {
+                info!("loading {name}.cbor");
+                ciborium::from_reader(cbor).ok()
+            },
+            (None, Some(json)) => {
+                info!("loading {name}.json");
+                serde_json::from_reader(json).ok()
             }
+            (Some(cbor),  Some(json)) => {
+                if Self::is_more_recent_than(&cbor, &json).unwrap_or(format == SaveFormat::Cbor) {
+                    info!("loading {name}.cbor");
+                    ciborium::from_reader(cbor).ok()
+                } else {
+                    info!("loading {name}.json");
+                    serde_json::from_reader(json).ok()
+                }
+            },
+            (None, None) => None,
         }
     }
 
-    fn id_map() -> serialization::IdMap {
-        let Ok(file) = File::open("id_map.json") else {
-            return Default::default();
-        };
-        let Ok(map) = serde_json::from_reader(file) else {
-            return Default::default();
-        };
-        map
-    }
-
-    fn new() -> Mutex<Self> {
-        let people_repartition = Self::people_repartition();
-        let id_map = Self::id_map();
+    fn new(save_format: SaveFormat) -> Mutex<Self> {
+        let people_repartition = Self::load_data(save_format, "classes").unwrap_or(Default::default());
+        let id_map = Self::load_data(save_format, "id_map").unwrap_or(Default::default());
         let mut data_server = DataServer::new(people_repartition, id_map);
 
-        if let Some(nicknames) = Self::load_nicknames() {
+        if let Some(nicknames)= Self::load_data::<HashMap<ProfilID, Vec<NickNameProposition>>>(save_format, "nicknames") {
+            info!("{} nicknames loaded", nicknames.len());
             data_server.load_proposition(nicknames);
         }
 
-        Self::load_old_nicknames(&mut data_server);
+        if let Some(generated_id_map) = data_server.build_id_map() {
+            let file = File::create("id_map.json").expect("Failed to create a id_map file");
+            serde_json::to_writer_pretty(file, &generated_id_map).unwrap();
+        }
 
-        let generated_id_map = data_server.build_id_map();
-
-        let file = File::create("id_map.json").expect("Failed to create a id_map file");
-        serde_json::to_writer_pretty(file, &generated_id_map).unwrap();
-
-        Mutex::new(AppState { data_server })
+        Mutex::new(AppState { data_server, save_format })
     }
 
     fn execute_command(&mut self, command: Commands) -> Result<Option<String>, ServerError> {
@@ -358,8 +372,8 @@ async fn cmd_input(
 }
 
 
-async fn save_loop(state: web::Data<Mutex<AppState>>) {
-    let mut interval = actix_web::rt::time::interval(std::time::Duration::from_secs(60));
+async fn save_loop(state: web::Data<Mutex<AppState>>, duration: Duration) {
+    let mut interval = actix_web::rt::time::interval(duration);
     loop {
         interval.tick().await;
         let mut state = state.lock().unwrap();
@@ -423,19 +437,45 @@ fn wait_for_cmd_input(server: web::Data<Mutex<AppState>>) {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct ServerConfig {
+    address: SocketAddr,
+    save_intervals: Duration,
+    save_format: SaveFormat,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 3000),
+            save_intervals: Duration::from_secs(300),
+            save_format: SaveFormat::Cbor,
+        }
+    }
+}
+
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // install global subscriber configured based on RUST_LOG envvar.
     tracing_subscriber::fmt().init();
     let secret_key = Key::generate();
 
+    let Ok(file) = File::open("config.json") else {
+        let config = File::create("config.json").expect("failed to create config");
+        serde_json::to_writer_pretty(config, &ServerConfig::default())?;
+        info!("Config created");
+        return Ok(());
+    };
+    let config: ServerConfig = serde_json::from_reader(file)?;
+
     info!("Starting server");
 
-    let state = web::Data::new(AppState::new());
+    let state = web::Data::new(AppState::new(config.save_format));
 
     let cloned = state.clone();
     let cloned2 = state.clone();
-    tokio::spawn(save_loop(state.clone()));
+    tokio::spawn(save_loop(state.clone(), config.save_intervals));
 
     let signal = async || {
         spawn_blocking(move || wait_for_cmd_input(cloned))
@@ -461,7 +501,7 @@ async fn main() -> std::io::Result<()> {
     })
     .shutdown_signal(signal())
     .keep_alive(KeepAlive::Os)
-    .bind(("0.0.0.0", 8080))?
+    .bind(config.address)?
     .run()
     .await;
 
