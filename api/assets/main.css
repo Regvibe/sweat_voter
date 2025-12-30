@@ -1,0 +1,76 @@
+html,
+body {
+    background-color: #ffffff;
+    color: white;
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    margin: 0;
+}
+
+.navbar {
+    position: relative;
+    display: flex;
+    background-color: #303030;
+    overflow: auto;
+    list-style-type: none;
+    padding-left: 5%;
+}
+
+.navbar_element {
+    padding-top: 25px;
+    padding-bottom: 25px;
+    padding-left: 30px;
+}
+
+.titre {
+    padding-top: 4px;
+}
+
+.navbar_logo {
+    padding-top: 10px;
+    height: 45px;
+    padding-right: 30px;
+}
+
+.auth {
+    color: black;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-top: 3%;
+}
+
+.login_container {
+    color: black;
+    height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.login_box {
+    border: 2px solid #e0e0e0;
+    border-radius: 0.5em;
+    padding: 20px;
+    padding-right: 50px;
+    padding-left: 50px;
+}
+
+.login_button_container {
+    padding-top: 10px;
+}
+
+.login_button {
+    border: 1px solid #808080;
+    background-color: white;
+    color: white;
+    padding: 3px 4px;
+    text-align: center;
+    text-decoration: none;
+    display: inline-block;
+    font-size: 16px;
+    cursor: pointer;
+    color: black;
+}
